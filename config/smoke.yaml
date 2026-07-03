@@ -1,0 +1,28 @@
+# ── 스모크 테스트 설정 ──────────────────────────────────────────────
+# 목적: 성능 측정이 아니라 "파이프라인이 도는지"만 확인한다.
+#  1) 4-bit 로딩이 이 환경(CUDA/bitsandbytes)에서 되는지
+#  2) 모델이 답을 제대로 생성하는지
+#  3) debate(n_agents x n_rounds) trace 가 저장되는지
+
+models:
+  exaone:
+    id: LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct
+    system_prompt: "You are EXAONE model from LG AI Research, a helpful assistant."
+    trust_remote_code: true       # EXAONE 은 커스텀 코드 로딩이 필요할 수 있음
+  qwen:
+    id: Qwen/Qwen3-4B
+    system_prompt: null
+    trust_remote_code: false
+
+load_in_4bit: true
+gpu_index: 0
+mem_fraction: 0.18                 # 공용 GPU: 내 프로세스를 24GB의 18%(~4.3GB)로 상한
+max_new_tokens: 256
+
+debate:
+  n_agents: 3
+  n_rounds: 2
+  temperature: 0.7                 # 초기 답변에 다양성을 주려고 sampling 사용
+
+# 넓이 = 6 (3-4-5 직각삼각형). 단일 모델이 틀리기도 하고, debate 로 수렴하는지 보기 좋은 예시.
+sample_question: "삼각형의 세 변의 길이가 3, 4, 5일 때 넓이는 얼마인가? 풀이 과정을 단계별로 쓰고, 마지막 줄에 '정답: <숫자>' 형식으로 답하라."
