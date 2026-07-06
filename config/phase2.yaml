@@ -1,0 +1,34 @@
+# ── Phase 2: K-News-Stance (한국어 뉴스 입장 탐지) ─────────────
+# 단일 LLM(vanilla/cot) vs Multi-Agent Debate 비교.
+# 지표: accuracy, macro-F1, confusion matrix.
+
+models:
+  qwen:
+    id: Qwen/Qwen3-4B
+    system_prompt: null
+    trust_remote_code: false
+  exaone:
+    id: LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct
+    system_prompt: "You are EXAONE model from LG AI Research, a helpful assistant."
+    trust_remote_code: true
+
+data_path: data/k-news-stance_nosegment.json
+
+load_in_4bit: false
+mem_fraction: null
+gpu_index: 0
+
+seed: 0
+split: validation               # val(199) 먼저, 확정되면 test(1001)
+n: 30                           # 처음엔 작게 (기사가 길어 debate 비쌈)
+max_new_tokens: 512
+
+sampling:
+  temperature: 0.7
+
+majority:
+  k: 5
+
+debate:
+  n_agents: 3
+  n_rounds: 2

@@ -136,16 +136,10 @@ tail -f ~/gpu_wait_run.log
 
 ---
 
-## 데이터셋 (Phase 2 에서 사용)
+## 데이터셋
 
-`K-News-Stance` (2,000 기사 / 47 이슈 / supportive·oppositional·neutral) JSON 은
-용량·라이선스 때문에 Git 에 넣지 않는다. 노트북에서 서버로 한 번 복사:
-
-```bash
-scp k-news-stance_nosegment.json user@<서버>:~/proj/mad-news-stance/data/
-```
-
-GSM8K / MMLU (Phase 1 재현용)는 코드에서 `datasets` 로 자동 다운로드 예정.
+- **K-News-Stance** (`data/k-news-stance_nosegment.json`, 2,000 기사 / 47 이슈 / supportive·oppositional·neutral): **repo 에 포함**되어 `git pull` 로 같이 받아진다(private repo). split 은 파일의 `split` 필드 사용(train 800 / validation 199 / test 1001).
+- **GSM8K / MMLU** (Phase 1 재현용): 코드에서 `datasets` 로 자동 다운로드.
 
 ---
 
@@ -167,6 +161,26 @@ python scripts/run_phase1.py --task mmlu  --n 50
 - 파라미터는 `config/phase1.yaml` (n, max_new_tokens, debate n_agents/n_rounds, majority k, temperature).
 - 비용 감: 문항당 호출수 = vanilla·cot **1**, majority **k(=5)**, debate **n_agents×n_rounds(=6)**. 처음엔 `--n` 작게.
 - `--model exaone` 은 transformers 버전 이슈 정리 후 사용 (지금은 `qwen` 기본).
+
+## Phase 2 실행 (K-News-Stance)
+
+단일 LLM(`vanilla`/`cot`) vs `majority`/`debate` 를 한국어 입장 탐지에서 비교.
+끝에 **accuracy · macro-F1 · confusion matrix** 를 method별로 출력.
+
+```bash
+# 빠른 확인 (기사가 길어 debate 비쌈 → 작게 먼저)
+python scripts/run_phase2.py --n 10 --methods vanilla,debate
+
+# 전체 method, validation
+python scripts/run_phase2.py --n 30
+
+# 본실험 (test)
+python scripts/run_phase2.py --split test --n 200
+```
+
+- 입력 = `issue + headline + article` → `supportive|oppositional|neutral`. 프롬프트가 "인용문 화자가 아니라 기사 논조" 를 명시(제안서의 neutral 혼동·인용 오독 대응).
+- 결과: `results/phase2/stance_{model}_{split}_n{n}.json` + 이어하기.
+- 파라미터: `config/phase2.yaml`.
 
 ## 로드맵
 
