@@ -1,0 +1,32 @@
+# ── Phase 1: 논문 재현 (GSM8K / MMLU) ─────────────────────────
+# 소량 서브셋에서 vanilla / cot / majority / debate 정확도를 비교한다.
+# 절대 수치보다 "debate > single/cot 경향" 재현이 목표.
+
+models:
+  qwen:
+    id: Qwen/Qwen3-4B
+    system_prompt: null
+    trust_remote_code: false
+  exaone:                       # 버전 정리되면 사용 (transformers 호환 이슈)
+    id: LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct
+    system_prompt: "You are EXAONE model from LG AI Research, a helpful assistant."
+    trust_remote_code: true
+
+load_in_4bit: false             # 빈 4090이면 fp16
+mem_fraction: null              # 공유 GPU면 0.18 등으로 상한
+gpu_index: 0
+
+seed: 0
+split: test
+n: 20                           # 처음엔 작게! 확인되면 50→100 으로
+max_new_tokens: 512             # 추론 여지 (스모크 256은 잘렸음)
+
+sampling:
+  temperature: 0.7              # majority/debate 다양성용 (vanilla/cot 는 greedy)
+
+majority:
+  k: 5
+
+debate:
+  n_agents: 3
+  n_rounds: 2

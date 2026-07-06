@@ -149,6 +149,25 @@ GSM8K / MMLU (Phase 1 재현용)는 코드에서 `datasets` 로 자동 다운로
 
 ---
 
+## Phase 1 실행 (논문 재현: GSM8K / MMLU)
+
+소량 서브셋에서 `vanilla / cot / majority / debate` 정확도를 비교합니다.
+목표는 절대 수치가 아니라 **debate > single/cot 경향** 재현.
+
+```bash
+# 먼저 아주 작게 (하네스 동작 확인)
+python scripts/run_phase1.py --task gsm8k --n 5 --methods vanilla,debate
+
+# 전체 method, 서브셋 키우기
+python scripts/run_phase1.py --task gsm8k --n 50
+python scripts/run_phase1.py --task mmlu  --n 50
+```
+
+- 결과: `results/phase1/{task}_{model}_n{n}.json` 저장 + 콘솔에 method별 정확도 표. 재실행하면 **끝난 항목은 건너뜀(이어하기)**.
+- 파라미터는 `config/phase1.yaml` (n, max_new_tokens, debate n_agents/n_rounds, majority k, temperature).
+- 비용 감: 문항당 호출수 = vanilla·cot **1**, majority **k(=5)**, debate **n_agents×n_rounds(=6)**. 처음엔 `--n` 작게.
+- `--model exaone` 은 transformers 버전 이슈 정리 후 사용 (지금은 `qwen` 기본).
+
 ## 로드맵
 
 - **Phase 0 (현재):** 스모크 테스트 — 파이프라인 점검.
