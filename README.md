@@ -57,13 +57,21 @@ git pull
 
 ### 1) 파이썬 환경 + 라이브러리
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
+시스템 python 에 `venv`/`pip` 가 없을 수 있으므로 **conda 환경 사용을 권장**(anaconda3 있으면 sudo 불필요, `python` 명령도 생김):
 
+```bash
+# conda 가 셸에서 안 잡히면 먼저: source ~/anaconda3/etc/profile.d/conda.sh
+conda create -n mad python=3.11 -y
+conda activate mad
+```
+
+> sudo 가 된다면 venv 도 가능: `sudo apt install -y python3-venv && python3 -m venv .venv && source .venv/bin/activate`
+
+환경 활성화 후 라이브러리 설치:
+
+```bash
 # torch 는 CUDA 에 맞춰 먼저 설치 (CUDA 12.x → cu121 휠, 드라이버 535 와 호환)
 pip install torch --index-url https://download.pytorch.org/whl/cu121
-
 pip install -r requirements.txt
 ```
 
