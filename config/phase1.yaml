@@ -19,7 +19,7 @@ gpu_index: 0
 seed: 0
 split: test
 n: 20                           # 처음엔 작게! 확인되면 50→100 으로
-max_new_tokens: 512             # 추론 여지 (스모크 256은 잘렸음)
+max_new_tokens: 1024            # CoT가 '정답:' 전에 잘리던 문제로 512→1024 (E2→E3)
 
 sampling:
   temperature: 0.7              # majority/debate 다양성용 (vanilla/cot 는 greedy)

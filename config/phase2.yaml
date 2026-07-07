@@ -21,7 +21,7 @@ gpu_index: 0
 seed: 0
 split: validation               # val(199) 먼저, 확정되면 test(1001)
 n: 30                           # 처음엔 작게 (기사가 길어 debate 비쌈)
-max_new_tokens: 512
+max_new_tokens: 1024            # CoT truncation 대비 (Phase 1 E2에서 발견)
 
 sampling:
   temperature: 0.7
