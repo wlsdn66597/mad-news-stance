@@ -1,12 +1,12 @@
 """Task 인터페이스 — debate 엔진이 task 를 모르게 하기 위한 얇은 추상화.
 
-각 task 는 데이터 로딩 / 질문 프롬프트 / 답 파싱 / 채점을 제공한다.
-Phase 1(GSM8K, MMLU)과 Phase 2(stance)가 같은 method/debate 코드를 재사용한다.
+각 task 는 데이터 로딩 / 질문 프롬프트 / 답 파싱 / 채점 + debate 프롬프트(언어별)를 제공한다.
 """
 
 
 class Task:
     name = "base"
+    debate_template = None   # task 가 언어/포맷에 맞게 제공; None 이면 debate 엔진 기본값 사용
 
     def load(self, split, n, seed=0):
         """[{'id', 'gold', ...}] 형태의 아이템 리스트를 반환."""

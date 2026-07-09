@@ -42,12 +42,14 @@ def parse_args():
 
 
 def method_kwargs(method, cfg):
+    # 논문 정렬: 모든 method 가 동일 temperature 사용
+    kw = {"temperature": cfg["sampling"]["temperature"]}
     if method == "majority":
-        return {"k": cfg["majority"]["k"], "temperature": cfg["sampling"]["temperature"]}
+        kw["k"] = cfg["majority"]["k"]
     if method == "debate":
-        return {"n_agents": cfg["debate"]["n_agents"], "n_rounds": cfg["debate"]["n_rounds"],
-                "temperature": cfg["sampling"]["temperature"]}
-    return {}
+        kw["n_agents"] = cfg["debate"]["n_agents"]
+        kw["n_rounds"] = cfg["debate"]["n_rounds"]
+    return kw
 
 
 def main():

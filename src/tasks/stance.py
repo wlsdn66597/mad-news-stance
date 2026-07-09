@@ -1,7 +1,7 @@
 """한국어 뉴스 입장 탐지 (K-News-Stance).
 
 입력: issue + headline + article  →  supportive / oppositional / neutral (3지선다)
-Phase 1(GSM8K/MMLU)과 같은 method/debate 코드를 그대로 재사용한다.
+프롬프트는 한국어(데이터가 한국어). debate 프롬프트는 논문 문구를 한국어로 옮긴 것.
 """
 import json
 import random
@@ -14,6 +14,13 @@ LABELS = ["supportive", "oppositional", "neutral"]
 
 class Stance(Task):
     name = "stance"
+    # 논문 debate 프롬프트의 한국어 대응 (MMLU/GSM8K 영어판과 병렬)
+    debate_template = (
+        "다음은 다른 에이전트들이 같은 기사에 대해 내놓은 판단입니다:\n\n{others}\n\n"
+        "다른 에이전트들의 추론을 추가 조언으로 참고하여, 당신의 판단과 다른 에이전트들의 판단을 "
+        "단계별로 검토한 뒤 갱신된 답을 제시하라. "
+        "마지막 줄에 반드시 '최종 입장: <supportive|oppositional|neutral>' 형식으로 답하라."
+    )
 
     def __init__(self, data_path="data/k-news-stance_nosegment.json"):
         self.data_path = data_path
@@ -57,8 +64,7 @@ class Stance(Task):
                     return lab
         found = [lab for lab in LABELS if lab in t]
         if found:
-            return max(found, key=lambda lab: t.rfind(lab))   # 마지막 등장 라벨
-        # 한국어 fallback
+            return max(found, key=lambda lab: t.rfind(lab))
         if any(k in text for k in ["지지", "찬성", "우호"]):
             return "supportive"
         if any(k in text for k in ["반대", "비판", "부정적"]):

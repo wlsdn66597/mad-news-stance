@@ -1,4 +1,4 @@
-"""GSM8K (초등 수학 추론) — 논문 재현의 reasoning 과업."""
+"""GSM8K (초등 수학 추론) — 논문 재현의 reasoning 과업. 프롬프트 영어."""
 import random
 import re
 
@@ -9,6 +9,12 @@ from .base import Task
 
 class GSM8K(Task):
     name = "gsm8k"
+    debate_template = (
+        "These are the solutions to the problem from other agents:\n\n{others}\n\n"
+        "Using the reasoning from other agents as additional advice, can you give an "
+        "updated answer? Examine your solution and that of other agents step by step. "
+        "Put your final numeric answer after 'Answer:'."
+    )
 
     def load(self, split="test", n=50, seed=0):
         ds = load_dataset("openai/gsm8k", "main", split=split)
@@ -24,19 +30,14 @@ class GSM8K(Task):
     def question(self, item, style="cot"):
         base = item["q"]
         if style == "cot":
-            return (f"{base}\n\n단계별로 풀이 과정을 쓰고, "
-                    "마지막 줄에 반드시 '정답: <숫자>' 형식으로 답하라.")
-        return f"{base}\n\n마지막 줄에 반드시 '정답: <숫자>' 형식으로 답만 써라."
+            return (f"{base}\n\nExplain your reasoning step by step, then give the final "
+                    "numeric answer after 'Answer:'.")
+        return f"{base}\n\nGive the final numeric answer after 'Answer:'."
 
     def parse(self, text):
-        # 1) '정답:' 뒤의 첫 숫자
-        for pat in (r"정답\s*[:：]\s*([^\n]+)", r"answer\s*[:：]\s*([^\n]+)"):
-            m = re.findall(pat, text, flags=re.IGNORECASE)
-            if m:
-                nums = re.findall(r"-?\d[\d,]*\.?\d*", m[-1])
-                if nums:
-                    return nums[0].replace(",", "").rstrip(".")
-        # 2) fallback: 본문 마지막 숫자
+        m = re.findall(r"[Aa]nswer\s*[:：]?\s*\$?\s*(-?\d[\d,]*\.?\d*)", text)
+        if m:
+            return m[-1].replace(",", "").rstrip(".")
         nums = re.findall(r"-?\d[\d,]*\.?\d*", text)
         return nums[-1].replace(",", "").rstrip(".") if nums else None
 
