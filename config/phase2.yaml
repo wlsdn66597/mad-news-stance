@@ -7,10 +7,10 @@ models:
     id: Qwen/Qwen3-4B
     system_prompt: null
     trust_remote_code: false
-  exaone:
-    id: LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct
-    system_prompt: "You are EXAONE model from LG AI Research, a helpful assistant."
-    trust_remote_code: true
+  exaone:                       # EXAONE-4.0 = transformers 네이티브 지원(>=4.54), remote code 불필요
+    id: LGAI-EXAONE/EXAONE-4.0-1.2B    # 3.5는 최신 transformers 비호환 → 4.0으로 대체
+    system_prompt: null
+    trust_remote_code: false
 
 data_path: data/k-news-stance_nosegment.json
 
