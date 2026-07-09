@@ -47,9 +47,13 @@ def run_majority(model, tok, task, item, sysp, max_new_tokens, k=5, temperature=
 
 
 def run_debate(model, tok, task, item, sysp, max_new_tokens, n_agents=3, n_rounds=2,
-               temperature=0.7, enable_thinking=None):
+               temperature=0.7, debate_prompt="paper", enable_thinking=None):
     q = task.question(item, style="cot")
-    template = task.debate_template or DEFAULT_DEBATE_TEMPLATE
+    if debate_prompt == "critical":
+        template = (getattr(task, "debate_template_critical", None)
+                    or task.debate_template or DEFAULT_DEBATE_TEMPLATE)
+    else:
+        template = task.debate_template or DEFAULT_DEBATE_TEMPLATE
     trace = _debate_engine(model, tok, q, debate_template=template, system_prompt=sysp,
                            n_agents=n_agents, n_rounds=n_rounds, max_new_tokens=max_new_tokens,
                            temperature=temperature, enable_thinking=enable_thinking)
