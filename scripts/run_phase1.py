@@ -43,6 +43,7 @@ def parse_args():
     ap.add_argument("--max-new-tokens", type=int, default=None, help="생성 토큰 상한 override")
     ap.add_argument("--n-rounds", type=int, default=None, help="debate 라운드 수 override")
     ap.add_argument("--n-agents", type=int, default=None, help="debate 에이전트 수 override")
+    ap.add_argument("--k", type=int, default=None, help="majority 샘플 수 override (debate와 공정비교용)")
     ap.add_argument("--tag", default="", help="결과 파일명 접미사 (변형 실험 구분)")
     return ap.parse_args()
 
@@ -51,7 +52,7 @@ def method_kwargs(method, cfg, args, temperature):
     # 논문 정렬: 모든 method 가 동일 temperature 사용
     kw = {"temperature": temperature}
     if method == "majority":
-        kw["k"] = cfg["majority"]["k"]
+        kw["k"] = args.k or cfg["majority"]["k"]
     if method == "debate":
         kw["n_agents"] = args.n_agents or cfg["debate"]["n_agents"]     # CLI override
         kw["n_rounds"] = args.n_rounds or cfg["debate"]["n_rounds"]     # CLI override
