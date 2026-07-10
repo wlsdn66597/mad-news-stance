@@ -21,15 +21,6 @@ class Stance(Task):
         "단계별로 검토한 뒤 갱신된 답을 제시하라. "
         "마지막 줄에 반드시 '최종 입장: <supportive|oppositional|neutral>' 형식으로 답하라."
     )
-    # H2: 비판적 프롬프트 (동조 억제, 오류 지적 유도)
-    debate_template_critical = (
-        "다음은 다른 에이전트들의 판단입니다:\n\n{others}\n\n"
-        "각 에이전트의 추론에 오류가 없는지 비판적으로 검토하라 — 무작정 동의하지 마라. "
-        "다른 에이전트의 근거가 약하거나 틀렸으면 어디가 틀렸는지 구체적으로 지적하라. "
-        "당신의 추론에 진짜 오류가 있을 때만 답을 바꿔라. 단계별로 재검토한 뒤, "
-        "마지막 줄에 반드시 '최종 입장: <supportive|oppositional|neutral>' 형식으로 답하라."
-    )
-
     def __init__(self, data_path="data/k-news-stance_nosegment.json"):
         self.data_path = data_path
 

@@ -15,15 +15,6 @@ class GSM8K(Task):
         "updated answer? Examine your solution and that of other agents step by step. "
         "Put your final numeric answer after 'Answer:'."
     )
-    # H2: 비판적 프롬프트 (동조 억제, 오류 지적 유도)
-    debate_template_critical = (
-        "These are solutions from other agents:\n\n{others}\n\n"
-        "Critically examine each agent's reasoning for mistakes — do NOT simply agree. "
-        "If another agent's reasoning is flawed, identify the specific error. Only revise "
-        "your answer if you find a genuine mistake. Then reason step by step and put your "
-        "final numeric answer after 'Answer:'."
-    )
-
     def load(self, split="test", n=50, seed=0):
         ds = load_dataset("openai/gsm8k", "main", split=split)
         idx = list(range(len(ds)))

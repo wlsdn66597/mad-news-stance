@@ -38,24 +38,23 @@ def parse_args():
     ap.add_argument("--methods", default="vanilla,cot,majority,debate")
     ap.add_argument("--n", type=int, default=None)
     ap.add_argument("--split", default=None)
-    # debate 변형 실험용 (config override)
+    # 논문 세팅 override (재현 실험용)
+    ap.add_argument("--temperature", type=float, default=None, help="샘플링 온도 override (논문 기본 ~1.0)")
+    ap.add_argument("--max-new-tokens", type=int, default=None, help="생성 토큰 상한 override")
     ap.add_argument("--n-rounds", type=int, default=None, help="debate 라운드 수 override")
     ap.add_argument("--n-agents", type=int, default=None, help="debate 에이전트 수 override")
-    ap.add_argument("--debate-prompt", default="paper", choices=["paper", "critical"],
-                    help="debate 프롬프트 종류")
     ap.add_argument("--tag", default="", help="결과 파일명 접미사 (변형 실험 구분)")
     return ap.parse_args()
 
 
-def method_kwargs(method, cfg, args):
+def method_kwargs(method, cfg, args, temperature):
     # 논문 정렬: 모든 method 가 동일 temperature 사용
-    kw = {"temperature": cfg["sampling"]["temperature"]}
+    kw = {"temperature": temperature}
     if method == "majority":
         kw["k"] = cfg["majority"]["k"]
     if method == "debate":
         kw["n_agents"] = args.n_agents or cfg["debate"]["n_agents"]     # CLI override
         kw["n_rounds"] = args.n_rounds or cfg["debate"]["n_rounds"]     # CLI override
-        kw["debate_prompt"] = args.debate_prompt
     return kw
 
 
@@ -68,7 +67,9 @@ def main():
     method_list = args.methods.split(",")
     enable_thinking = False if args.model == "qwen" else None  # Qwen: non-thinking
     sysp = mc.get("system_prompt")
-    mnt = cfg["max_new_tokens"]
+    mnt = args.max_new_tokens or cfg["max_new_tokens"]
+    temperature = args.temperature if args.temperature is not None else cfg["sampling"]["temperature"]
+    print(f"[cfg] temperature={temperature} max_new_tokens={mnt}")
 
     task = TASKS[args.task]()
     items = task.load(split=split, n=n, seed=cfg["seed"])
@@ -86,7 +87,7 @@ def main():
 
     for method in method_list:
         fn = METHOD_FNS[method]
-        kw = method_kwargs(method, cfg, args)
+        kw = method_kwargs(method, cfg, args, temperature)
         done = results.setdefault(method, {})
         t0 = time.time()
         for it in items:
