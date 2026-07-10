@@ -25,7 +25,7 @@ sampling:
   temperature: 0.7              # majority/debate 다양성용 (vanilla/cot 는 greedy)
 
 majority:
-  k: 5
+  k: 3                           # 논문 "Multi-Agent (Majority)": debate와 같은 agent 수(3)로 독립 생성+다수결
 
 debate:
   n_agents: 3
