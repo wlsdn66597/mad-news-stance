@@ -20,10 +20,16 @@ def _majority(preds):
 
 def _one(model, tok, task, item, sysp, max_new_tokens, temperature, style, enable_thinking):
     q = task.question(item, style=style)
-    out = strip_think(chat(model, tok, build_messages(q, system_prompt=sysp),
+    messages = build_messages(q, system_prompt=sysp)
+    out = strip_think(chat(model, tok, messages,
                            max_new_tokens=max_new_tokens, temperature=temperature,
                            enable_thinking=enable_thinking))
-    return {"pred": task.parse(out), "raw": [out]}
+    return {
+        "pred": task.parse(out),
+        "raw": [out],
+        "prompt": q,
+        "messages": messages,
+    }
 
 
 def run_vanilla(model, tok, task, item, sysp, max_new_tokens, temperature=0.7, enable_thinking=None):
@@ -36,14 +42,21 @@ def run_cot(model, tok, task, item, sysp, max_new_tokens, temperature=0.7, enabl
 
 def run_majority(model, tok, task, item, sysp, max_new_tokens, k=5, temperature=0.7, enable_thinking=None):
     q = task.question(item, style="cot")
+    messages = build_messages(q, system_prompt=sysp)
     outs, preds = [], []
     for _ in range(k):
-        o = strip_think(chat(model, tok, build_messages(q, system_prompt=sysp),
+        o = strip_think(chat(model, tok, messages,
                              max_new_tokens=max_new_tokens, temperature=temperature,
                              enable_thinking=enable_thinking))
         outs.append(o)
         preds.append(task.parse(o))
-    return {"pred": _majority(preds), "raw": outs, "preds": preds}
+    return {
+        "pred": _majority(preds),
+        "raw": outs,
+        "preds": preds,
+        "prompt": q,
+        "messages": messages,
+    }
 
 
 def run_debate(model, tok, task, item, sysp, max_new_tokens, n_agents=3, n_rounds=2,
@@ -55,4 +68,10 @@ def run_debate(model, tok, task, item, sysp, max_new_tokens, n_agents=3, n_round
                            temperature=temperature, enable_thinking=enable_thinking)
     final = trace["answers_by_round"][-1]
     preds = [task.parse(a) for a in final]
-    return {"pred": _majority(preds), "raw": final, "preds": preds}
+    return {
+        "pred": _majority(preds),
+        "raw": final,
+        "preds": preds,
+        "prompt": q,
+        "debate_trace": trace,
+    }

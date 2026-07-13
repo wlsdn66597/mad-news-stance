@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 1 faithful repeated experiment: one model, n=100, five repeats.
+# Phase 1 faithful repeated experiment: one model, n=100, three repeats.
 set -euo pipefail
 
 MODEL="${1:-}"
@@ -18,9 +18,9 @@ exec python scripts/run_phase1_repeated.py \
   --models "$MODEL" \
   --methods vanilla,cot,majority,debate \
   --n 100 \
-  --repeats 5 \
+  --repeats 3 \
   --data-seed 0 \
   --base-run-seed 1000 \
   --temperature 1.0 \
-  --tag-prefix faithful_repeat \
+  --tag-prefix faithful_repeat_trace \
   "$@"

@@ -10,7 +10,7 @@
 
   # 본실험
   python scripts/run_phase1_repeated.py \
-      --tasks gsm8k,mmlu --models qwen,exaone --n 100 --repeats 5
+      --tasks gsm8k,mmlu --models qwen,exaone --n 100 --repeats 3
 """
 import argparse
 import csv
@@ -42,7 +42,7 @@ def parse_args():
     ap.add_argument("--methods", default="vanilla,cot,majority,debate")
     ap.add_argument("--n", type=int, default=100)
     ap.add_argument("--split", default=None)
-    ap.add_argument("--repeats", type=int, default=5)
+    ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--data-seed", type=int, default=0)
     ap.add_argument("--base-run-seed", type=int, default=1000)
     ap.add_argument("--tag-prefix", default="repeat")

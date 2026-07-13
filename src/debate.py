@@ -42,8 +42,15 @@ def run_debate(model, tokenizer, question, debate_template=DEFAULT_DEBATE_TEMPLA
 
     return {
         "question": question,
+        "debate_template": debate_template,
+        "system_prompt": system_prompt,
         "n_agents": n_agents,
         "n_rounds": n_rounds,
+        "generation_config": {
+            "max_new_tokens": max_new_tokens,
+            "temperature": temperature,
+            "enable_thinking": enable_thinking,
+        },
         "answers_by_round": answers_by_round,
         "agent_contexts": agent_contexts,
     }
