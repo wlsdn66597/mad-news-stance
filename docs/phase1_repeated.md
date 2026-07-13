@@ -26,27 +26,20 @@ python scripts/run_phase1_repeated.py \
 
 ## 본실험
 
-두 task와 두 모델을 각각 100문항, 5회 반복한다.
-기존 `scripts/run_n100.sh`의 faithful 설정과 맞추기 위해 temperature는 1.0으로 지정한다.
+두 task와 두 모델을 각각 100문항, 5회 반복한다. 기존
+`scripts/run_n100.sh`의 faithful 설정과 맞추기 위해 temperature는 1.0으로 지정한다.
+GPU 메모리 충돌을 피하도록 Qwen 완료 후 EXAONE을 순차 실행한다.
 
 ```bash
-nohup python scripts/run_phase1_repeated.py \
-  --tasks gsm8k,mmlu \
-  --models qwen,exaone \
-  --methods vanilla,cot,majority,debate \
-  --n 100 \
-  --repeats 5 \
-  --data-seed 0 \
-  --base-run-seed 1000 \
-  --temperature 1.0 \
-  --tag-prefix faithful_repeat \
-  > phase1_repeated.log 2>&1 &
+nohup bash scripts/run_repeated_n100.sh qwen > phase1_repeat_qwen.log 2>&1 &
+nohup bash scripts/run_repeated_n100.sh exaone > phase1_repeat_exaone.log 2>&1 &
 ```
 
 진행 상황은 다음 명령으로 확인한다.
 
 ```bash
-tail -f phase1_repeated.log
+tail -f phase1_repeat_qwen.log
+tail -f phase1_repeat_exaone.log
 ```
 
 프로세스가 중단되면 같은 본실험 명령을 다시 실행한다. `run_phase1.py`가 이미 저장된 문항을
