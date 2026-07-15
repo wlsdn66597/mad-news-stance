@@ -30,3 +30,8 @@ majority:
 debate:
   n_agents: 3
   n_rounds: 2
+
+# shared summarization-memory (agent 수 확장 실험)
+memory:
+  max_new_tokens: 256
+  temperature: 0.0

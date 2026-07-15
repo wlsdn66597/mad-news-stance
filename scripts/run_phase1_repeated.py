@@ -27,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = REPO_ROOT / "results" / "phase1"
 VALID_TASKS = {"gsm8k", "mmlu"}
 VALID_MODELS = {"qwen", "exaone"}
-VALID_METHODS = {"vanilla", "cot", "majority", "debate"}
+VALID_METHODS = {"vanilla", "cot", "majority", "debate", "debate_memory"}
 
 
 def csv_list(value):
@@ -51,6 +51,8 @@ def parse_args():
     ap.add_argument("--n-rounds", type=int, default=None)
     ap.add_argument("--n-agents", type=int, default=None)
     ap.add_argument("--k", type=int, default=None)
+    ap.add_argument("--memory-max-new-tokens", type=int, default=None)
+    ap.add_argument("--memory-temperature", type=float, default=None)
     ap.add_argument("--summarize-only", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument(
@@ -111,6 +113,8 @@ def build_command(args, task, model, repeat_index):
         ("--n-rounds", args.n_rounds),
         ("--n-agents", args.n_agents),
         ("--k", args.k),
+        ("--memory-max-new-tokens", args.memory_max_new_tokens),
+        ("--memory-temperature", args.memory_temperature),
     ]
     for flag, value in optional:
         if value is not None:

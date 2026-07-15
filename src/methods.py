@@ -1,10 +1,11 @@
 """비교 대상 method 들. 모두 (pred, raw ...) dict 를 돌려준다.
 
-논문 정렬: 모든 method 가 **동일한 temperature** 를 쓴다(논문은 single·debate 모두 같은 온도).
-- vanilla : 직답 1회
-- cot     : 단계별 추론 1회
-- majority: cot 를 k회 샘플링 후 다수결 (self-consistency)
-- debate  : Multi-Agent Debate 후 마지막 라운드 다수결
+논문 정렬: 모든 method 가 동일한 temperature 를 쓴다.
+- vanilla       : 직답 1회
+- cot           : 단계별 추론 1회
+- majority      : cot 를 k회 샘플링 후 다수결
+- debate        : 다른 agent 응답을 직접 연결하는 Multi-Agent Debate
+- debate_memory : 직전 round 전체를 shared memory agent가 요약한 뒤 토론
 """
 from collections import Counter
 
@@ -21,9 +22,16 @@ def _majority(preds):
 def _one(model, tok, task, item, sysp, max_new_tokens, temperature, style, enable_thinking):
     q = task.question(item, style=style)
     messages = build_messages(q, system_prompt=sysp)
-    out = strip_think(chat(model, tok, messages,
-                           max_new_tokens=max_new_tokens, temperature=temperature,
-                           enable_thinking=enable_thinking))
+    out = strip_think(
+        chat(
+            model,
+            tok,
+            messages,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            enable_thinking=enable_thinking,
+        )
+    )
     return {
         "pred": task.parse(out),
         "raw": [out],
@@ -32,24 +40,49 @@ def _one(model, tok, task, item, sysp, max_new_tokens, temperature, style, enabl
     }
 
 
-def run_vanilla(model, tok, task, item, sysp, max_new_tokens, temperature=0.7, enable_thinking=None):
-    return _one(model, tok, task, item, sysp, max_new_tokens, temperature, "vanilla", enable_thinking)
+def run_vanilla(
+    model, tok, task, item, sysp, max_new_tokens, temperature=0.7, enable_thinking=None
+):
+    return _one(
+        model, tok, task, item, sysp, max_new_tokens, temperature, "vanilla", enable_thinking
+    )
 
 
-def run_cot(model, tok, task, item, sysp, max_new_tokens, temperature=0.7, enable_thinking=None):
-    return _one(model, tok, task, item, sysp, max_new_tokens, temperature, "cot", enable_thinking)
+def run_cot(
+    model, tok, task, item, sysp, max_new_tokens, temperature=0.7, enable_thinking=None
+):
+    return _one(
+        model, tok, task, item, sysp, max_new_tokens, temperature, "cot", enable_thinking
+    )
 
 
-def run_majority(model, tok, task, item, sysp, max_new_tokens, k=5, temperature=0.7, enable_thinking=None):
+def run_majority(
+    model,
+    tok,
+    task,
+    item,
+    sysp,
+    max_new_tokens,
+    k=5,
+    temperature=0.7,
+    enable_thinking=None,
+):
     q = task.question(item, style="cot")
     messages = build_messages(q, system_prompt=sysp)
     outs, preds = [], []
     for _ in range(k):
-        o = strip_think(chat(model, tok, messages,
-                             max_new_tokens=max_new_tokens, temperature=temperature,
-                             enable_thinking=enable_thinking))
-        outs.append(o)
-        preds.append(task.parse(o))
+        out = strip_think(
+            chat(
+                model,
+                tok,
+                messages,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                enable_thinking=enable_thinking,
+            )
+        )
+        outs.append(out)
+        preds.append(task.parse(out))
     return {
         "pred": _majority(preds),
         "raw": outs,
@@ -59,19 +92,76 @@ def run_majority(model, tok, task, item, sysp, max_new_tokens, k=5, temperature=
     }
 
 
-def run_debate(model, tok, task, item, sysp, max_new_tokens, n_agents=3, n_rounds=2,
-               temperature=0.7, enable_thinking=None):
-    q = task.question(item, style="cot")
-    template = task.debate_template or DEFAULT_DEBATE_TEMPLATE
-    trace = _debate_engine(model, tok, q, debate_template=template, system_prompt=sysp,
-                           n_agents=n_agents, n_rounds=n_rounds, max_new_tokens=max_new_tokens,
-                           temperature=temperature, enable_thinking=enable_thinking)
+def _result_from_trace(task, question, trace):
     final = trace["answers_by_round"][-1]
-    preds = [task.parse(a) for a in final]
+    preds = [task.parse(answer) for answer in final]
     return {
         "pred": _majority(preds),
         "raw": final,
         "preds": preds,
-        "prompt": q,
+        "prompt": question,
         "debate_trace": trace,
     }
+
+
+def run_debate(
+    model,
+    tok,
+    task,
+    item,
+    sysp,
+    max_new_tokens,
+    n_agents=3,
+    n_rounds=2,
+    temperature=0.7,
+    enable_thinking=None,
+):
+    question = task.question(item, style="cot")
+    template = task.debate_template or DEFAULT_DEBATE_TEMPLATE
+    trace = _debate_engine(
+        model,
+        tok,
+        question,
+        debate_template=template,
+        system_prompt=sysp,
+        n_agents=n_agents,
+        n_rounds=n_rounds,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        enable_thinking=enable_thinking,
+    )
+    return _result_from_trace(task, question, trace)
+
+
+def run_debate_memory(
+    model,
+    tok,
+    task,
+    item,
+    sysp,
+    max_new_tokens,
+    n_agents=5,
+    n_rounds=2,
+    temperature=0.7,
+    enable_thinking=None,
+    memory_max_new_tokens=256,
+    memory_temperature=0.0,
+):
+    question = task.question(item, style="cot")
+    template = task.debate_template or DEFAULT_DEBATE_TEMPLATE
+    trace = _debate_engine(
+        model,
+        tok,
+        question,
+        debate_template=template,
+        system_prompt=sysp,
+        n_agents=n_agents,
+        n_rounds=n_rounds,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        enable_thinking=enable_thinking,
+        use_memory=True,
+        memory_max_new_tokens=memory_max_new_tokens,
+        memory_temperature=memory_temperature,
+    )
+    return _result_from_trace(task, question, trace)
