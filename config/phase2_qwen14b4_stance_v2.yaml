@@ -1,0 +1,36 @@
+# Application-focused K-News-Stance experiments; Phase 1 remains frozen.
+models:
+  qwen:
+    id: Qwen/Qwen3-14B
+    system_prompt: null
+    trust_remote_code: false
+
+data_path: data/k-news-stance_nosegment.json
+prompt_profile: stance_v2_en
+
+# bitsandbytes NF4 + double quantization; compute dtype is bfloat16.
+load_in_4bit: true
+mem_fraction: null
+gpu_index: 0
+
+seed: 0
+split: validation
+n: 60
+max_new_tokens: 384
+
+sampling:
+  temperature: 1.0
+
+majority:
+  k: 5
+
+debate:
+  n_agents: 5
+  n_rounds: 2
+
+memory:
+  max_new_tokens: 384
+  temperature: 0.0
+
+# Reuse identical initial samples for paired majority/direct/memory comparisons.
+share_round0: true

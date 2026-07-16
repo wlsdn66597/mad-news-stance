@@ -1,0 +1,245 @@
+"""Prompt profiles for Korean news stance detection.
+
+The legacy prompt is preserved for comparison. The v2 profiles encode the same
+decision protocol in English and Korean so prompt language can be ablated
+without changing the underlying task definition.
+"""
+from dataclasses import dataclass, replace
+from typing import Optional
+
+
+LABEL_LINE_EN = "Final stance: <supportive|oppositional|neutral>"
+LABEL_LINE_KO = "최종 입장: <supportive|oppositional|neutral>"
+
+
+@dataclass(frozen=True)
+class StancePromptProfile:
+    name: str
+    language: str
+    cot_instruction: str
+    vanilla_instruction: str
+    debate_template: str
+    memory_summary_template: Optional[str] = None
+    memory_debate_template: Optional[str] = None
+
+    def article_block(self, item):
+        if self.language == "ko":
+            return (
+                f"이슈: {item['issue']}\n"
+                f"제목: {item['headline']}\n"
+                f"기사:\n{item['article']}"
+            )
+        return (
+            f"Issue: {item['issue']}\n"
+            f"Headline: {item['headline']}\n"
+            f"Article (Korean):\n{item['article']}"
+        )
+
+    def question(self, item, style="cot"):
+        instruction = self.cot_instruction if style == "cot" else self.vanilla_instruction
+        return f"{self.article_block(item)}\n\n{instruction}"
+
+    def memory_context(self, item):
+        return self.article_block(item)
+
+
+LEGACY_KO = StancePromptProfile(
+    name="legacy_ko",
+    language="ko",
+    cot_instruction=(
+        "위 기사가 해당 이슈에 대해 취하는 입장을 판단하라. "
+        "supportive(지지/찬성), oppositional(반대/비판), neutral(중립) 중 하나다. "
+        "인용문 화자의 입장이 아니라 기사 자체의 논조를 기준으로 판단하라.\n\n"
+        "먼저 핵심 근거 문장을 짚은 뒤 판단하고, 마지막 줄에 반드시 "
+        "'최종 입장: <supportive|oppositional|neutral>' 형식으로 셋 중 하나만 영어로 써라."
+    ),
+    vanilla_instruction=(
+        "위 기사가 해당 이슈에 대해 취하는 입장을 판단하라. "
+        "supportive(지지/찬성), oppositional(반대/비판), neutral(중립) 중 하나다. "
+        "인용문 화자의 입장이 아니라 기사 자체의 논조를 기준으로 판단하라.\n\n"
+        "마지막 줄에 반드시 '최종 입장: <supportive|oppositional|neutral>' "
+        "형식으로 셋 중 하나만 영어로 써라."
+    ),
+    debate_template=(
+        "다음은 다른 에이전트들이 같은 기사에 대해 내놓은 판단입니다:\n\n{others}\n\n"
+        "다른 에이전트들의 추론을 추가 조언으로 참고하여, 당신의 판단과 다른 "
+        "에이전트들의 판단을 단계별로 검토한 뒤 갱신된 답을 제시하라. "
+        "마지막 줄에 반드시 '최종 입장: <supportive|oppositional|neutral>' "
+        "형식으로 답하라."
+    ),
+)
+
+
+STANCE_V2_EN = StancePromptProfile(
+    name="stance_v2_en",
+    language="en",
+    cot_instruction=(
+        "Classify the stance taken by the news article itself toward the specified issue.\n\n"
+        "Labels:\n"
+        "- supportive: the article endorses, favors, or positively justifies the issue, "
+        "policy, proposal, or claim.\n"
+        "- oppositional: the article rejects, criticizes, or frames it negatively.\n"
+        "- neutral: the article mainly reports facts or presents competing views without "
+        "a clear authorial direction.\n\n"
+        "Decision protocol:\n"
+        "1. Restate the issue as the proposition being evaluated.\n"
+        "2. Identify at most two short passages that reveal the journalist's or outlet's "
+        "own framing.\n"
+        "3. Separate authorial narration, headline framing, and editorial wording from "
+        "statements merely attributed to quoted speakers.\n"
+        "4. Note the strongest evidence for a competing label.\n"
+        "5. Choose the label supported by the article's overall framing. Do not treat a "
+        "speaker's stance as the article's stance.\n\n"
+        "Respond with these fields:\n"
+        "Issue proposition:\nAuthorial evidence:\nQuoted-source evidence:\n"
+        "Counter-evidence:\nDecision rationale:\n"
+        + LABEL_LINE_EN
+    ),
+    vanilla_instruction=(
+        "Classify the stance taken by the news article itself toward the specified issue "
+        "as supportive, oppositional, or neutral. Distinguish the journalist's framing "
+        "from the views of quoted speakers. A speaker's stance is not automatically the "
+        "article's stance. End with exactly:\n"
+        + LABEL_LINE_EN
+    ),
+    debate_template=(
+        "Below are other agents' analyses of the same Korean news article:\n\n"
+        "{others}\n\n"
+        "Audit the analyses against the original issue and article already in your "
+        "context. Follow this protocol:\n"
+        "1. Verify that every claimed passage or fact actually appears in the article.\n"
+        "2. Distinguish authorial or headline framing from language attributed to a "
+        "quoted speaker.\n"
+        "3. Identify which competing label has the strongest article-grounded evidence.\n"
+        "4. Agent vote counts and confidence are not evidence. Do not follow the majority "
+        "merely because it is the majority.\n"
+        "5. Change your previous label only when a concrete passage or framing cue "
+        "warrants the change; otherwise retain it.\n\n"
+        "Respond with:\nPrevious stance:\nValid new evidence:\nRejected evidence and why:\n"
+        "Changed stance: <yes|no>\n"
+        + LABEL_LINE_EN
+    ),
+    memory_summary_template=(
+        "You are a shared evidence-memory writer for a multi-agent Korean news stance "
+        "debate. Compress the agent responses into a neutral evidence ledger. Do not "
+        "decide the final label, solve the classification yourself, count votes as "
+        "evidence, or force consensus.\n\n"
+        "Original task context:\n{task_context}\n\n"
+        "Latest agent responses:\n{responses}\n\n"
+        "Verify proposed evidence against the original article and return only these "
+        "sections:\n"
+        "[Candidate stances] Agent labels and their candidate labels.\n"
+        "[Authorial evidence] Short exact passages showing headline, journalist, or outlet "
+        "framing, with source agent labels.\n"
+        "[Quoted-source evidence] Speaker-attributed passages that must not automatically "
+        "be treated as the article's stance.\n"
+        "[Counter-evidence] Evidence supporting competing labels.\n"
+        "[Errors or unsupported claims] Claims not found in the article, attribution "
+        "mistakes, or reasoning conflicts.\n"
+        "[Unresolved points] Questions that agents should re-check.\n"
+        "Preserve minority evidence when it is concrete and article-grounded. Be concise."
+    ),
+    memory_debate_template=(
+        "A shared memory writer compressed the latest agent responses into this evidence "
+        "ledger:\n\n{memory}\n\n"
+        "Treat the ledger as an index of claims, not as an answer. Re-check each relevant "
+        "claim against the original Korean article and your previous analysis. Vote counts "
+        "and confidence are not evidence. Change your label only when a concrete article "
+        "passage or framing cue warrants it; otherwise retain your previous label.\n\n"
+        "Respond with:\nPrevious stance:\nDecisive verified evidence:\n"
+        "Rejected or misattributed evidence:\nChanged stance: <yes|no>\n"
+        + LABEL_LINE_EN
+    ),
+)
+
+
+STANCE_V2_EN_GENERIC_MEMORY = replace(
+    STANCE_V2_EN,
+    name="stance_v2_en_generic_memory",
+    memory_summary_template=None,
+    memory_debate_template=None,
+)
+
+
+STANCE_V2_KO = StancePromptProfile(
+    name="stance_v2_ko",
+    language="ko",
+    cot_instruction=(
+        "기사 자체가 지정된 이슈에 대해 취하는 입장을 분류하라.\n\n"
+        "라벨 정의:\n"
+        "- supportive: 기사 자체가 이슈·정책·주장을 지지하거나 긍정적으로 정당화함\n"
+        "- oppositional: 기사 자체가 이슈를 반대·비판하거나 부정적으로 프레이밍함\n"
+        "- neutral: 사실 전달이나 상반된 견해 소개가 중심이고 명확한 기사 논조가 없음\n\n"
+        "판단 절차:\n"
+        "1. 평가 대상 이슈를 하나의 명제로 다시 적는다.\n"
+        "2. 기자 또는 매체의 논조를 보여주는 짧은 문구를 최대 두 개 찾는다.\n"
+        "3. 기자 서술·제목 프레이밍·논평과 인용된 화자의 발언을 구분한다.\n"
+        "4. 다른 라벨을 지지하는 가장 강한 반대 근거도 확인한다.\n"
+        "5. 기사 전체 프레이밍에 근거해 판단하며, 인용 화자의 입장을 기사 자체의 "
+        "입장으로 간주하지 않는다.\n\n"
+        "다음 형식으로 답하라:\n이슈 명제:\n기사 자체의 근거:\n인용 화자의 근거:\n"
+        "반대 근거:\n판단 이유:\n"
+        + LABEL_LINE_KO
+    ),
+    vanilla_instruction=(
+        "기사 자체가 해당 이슈에 대해 취하는 입장을 supportive, oppositional, neutral "
+        "중 하나로 분류하라. 기자의 프레이밍과 인용 화자의 견해를 구분하고, 인용 "
+        "화자의 입장을 기사 자체의 입장으로 간주하지 마라. 마지막 줄은 정확히 "
+        "다음 형식으로 작성하라:\n"
+        + LABEL_LINE_KO
+    ),
+    debate_template=(
+        "다음은 같은 한국어 뉴스 기사에 대한 다른 에이전트들의 분석이다:\n\n"
+        "{others}\n\n"
+        "기존 대화에 있는 원래 이슈와 기사에 비추어 다음 절차로 검증하라:\n"
+        "1. 제시된 문구와 사실이 실제 기사에 존재하는지 확인한다.\n"
+        "2. 기자·제목의 프레이밍과 인용 화자의 발언을 구분한다.\n"
+        "3. 서로 다른 라벨 중 기사 근거가 가장 강한 것을 찾는다.\n"
+        "4. 에이전트 수와 자신감은 근거가 아니며 단순히 다수 의견을 따르지 않는다.\n"
+        "5. 구체적인 기사 문구나 프레이밍 근거가 있을 때만 기존 라벨을 변경하고, "
+        "그렇지 않으면 유지한다.\n\n"
+        "다음 형식으로 답하라:\n이전 입장:\n새롭게 확인한 유효 근거:\n"
+        "배제한 근거와 이유:\n입장 변경: <예|아니오>\n"
+        + LABEL_LINE_KO
+    ),
+    memory_summary_template=(
+        "당신은 한국어 뉴스 입장 토론을 위한 공유 근거 메모리 작성자다. 에이전트 "
+        "응답을 중립적인 근거 원장으로 압축하라. 최종 라벨을 결정하거나, 직접 분류를 "
+        "풀거나, 다수결을 근거로 사용하거나, 합의를 강제하지 마라.\n\n"
+        "원래 과업 맥락:\n{task_context}\n\n"
+        "최근 에이전트 응답:\n{responses}\n\n"
+        "제시된 근거를 기사 원문과 대조하고 다음 섹션만 작성하라:\n"
+        "[후보 입장] 에이전트와 후보 라벨\n"
+        "[기사 자체의 근거] 제목·기자·매체 프레이밍을 보여주는 짧은 원문과 출처 에이전트\n"
+        "[인용 화자의 근거] 기사 입장으로 자동 간주하면 안 되는 화자 발언\n"
+        "[반대 근거] 다른 라벨을 지지하는 근거\n"
+        "[오류 또는 미확인 주장] 기사에 없거나 귀속이 잘못됐거나 충돌하는 주장\n"
+        "[미해결 쟁점] 에이전트가 다시 확인해야 할 사항\n"
+        "구체적인 기사 근거가 있는 소수 의견을 보존하고 간결하게 작성하라."
+    ),
+    memory_debate_template=(
+        "공유 메모리 작성자가 최근 응답을 다음 근거 원장으로 압축했다:\n\n"
+        "{memory}\n\n"
+        "이 원장을 정답이 아니라 확인할 주장 목록으로 취급하라. 원래 한국어 기사와 "
+        "자신의 이전 분석을 기준으로 관련 주장을 다시 검증하라. 에이전트 수와 자신감은 "
+        "근거가 아니다. 구체적인 기사 문구나 프레이밍 근거가 있을 때만 라벨을 변경하고, "
+        "그렇지 않으면 기존 라벨을 유지하라.\n\n"
+        "다음 형식으로 답하라:\n이전 입장:\n결정적인 검증 근거:\n"
+        "배제하거나 귀속을 수정한 근거:\n입장 변경: <예|아니오>\n"
+        + LABEL_LINE_KO
+    ),
+)
+
+
+PROFILES = {
+    profile.name: profile
+    for profile in (LEGACY_KO, STANCE_V2_EN, STANCE_V2_EN_GENERIC_MEMORY, STANCE_V2_KO)
+}
+
+
+def get_stance_prompt_profile(name):
+    try:
+        return PROFILES[name]
+    except KeyError as exc:
+        choices = ", ".join(sorted(PROFILES))
+        raise ValueError(f"unknown stance prompt profile {name!r}; choose one of: {choices}") from exc

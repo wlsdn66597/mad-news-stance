@@ -80,6 +80,9 @@ def run_debate(
     temperature=0.7,
     enable_thinking=None,
     use_memory=False,
+    memory_context=None,
+    prompt_profile=None,
+    initial_answers=None,
     memory_summary_template=DEFAULT_MEMORY_SUMMARY_TEMPLATE,
     memory_debate_template=DEFAULT_MEMORY_DEBATE_TEMPLATE,
     memory_max_new_tokens=256,
@@ -89,6 +92,8 @@ def run_debate(
         raise ValueError("n_agents must be at least 1")
     if n_rounds < 1:
         raise ValueError("n_rounds must be at least 1")
+    if initial_answers is not None and len(initial_answers) != n_agents:
+        raise ValueError("initial_answers must contain exactly n_agents responses")
 
     agent_contexts = [
         build_messages(question, system_prompt=system_prompt) for _ in range(n_agents)
@@ -102,7 +107,10 @@ def run_debate(
         memory_record = None
         if round_index > 0 and use_memory:
             memory_source = format_round_answers(answers_by_round[round_index - 1])
-            memory_prompt = memory_summary_template.format(responses=memory_source)
+            memory_prompt = memory_summary_template.format(
+                responses=memory_source,
+                task_context=memory_context or "",
+            )
             memory_messages = build_messages(memory_prompt)
             memory = strip_think(
                 chat(
@@ -150,15 +158,18 @@ def run_debate(
                 agent_contexts[agent_index].append(
                     {"role": "user", "content": debate_prompt}
                 )
-            reply = chat(
-                model,
-                tokenizer,
-                agent_contexts[agent_index],
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                enable_thinking=enable_thinking,
-            )
-            reply = strip_think(reply)
+            if round_index == 0 and initial_answers is not None:
+                reply = initial_answers[agent_index]
+            else:
+                reply = chat(
+                    model,
+                    tokenizer,
+                    agent_contexts[agent_index],
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    enable_thinking=enable_thinking,
+                )
+                reply = strip_think(reply)
             agent_contexts[agent_index].append(
                 {"role": "assistant", "content": reply}
             )
@@ -212,7 +223,9 @@ def run_debate(
             }
         )
 
-    agent_generation_calls = n_agents * n_rounds
+    logical_agent_generation_calls = n_agents * n_rounds
+    reused_initial_answers = n_agents if initial_answers is not None else 0
+    executed_agent_generation_calls = logical_agent_generation_calls - reused_initial_answers
     memory_generation_calls = (n_rounds - 1) if use_memory else 0
     return {
         "question": question,
@@ -221,6 +234,8 @@ def run_debate(
         "n_agents": n_agents,
         "n_rounds": n_rounds,
         "communication_mode": "shared_summary" if use_memory else "direct_concat",
+        "prompt_profile": prompt_profile,
+        "initial_answer_source": "provided" if initial_answers is not None else "generated",
         "generation_config": {
             "max_new_tokens": max_new_tokens,
             "temperature": temperature,
@@ -232,11 +247,15 @@ def run_debate(
             "debate_template": memory_debate_template if use_memory else None,
             "max_new_tokens": memory_max_new_tokens if use_memory else None,
             "temperature": memory_temperature if use_memory else None,
+            "task_context_included": bool(memory_context) if use_memory else False,
         },
         "call_counts": {
-            "agent_generation_calls": agent_generation_calls,
+            "agent_generation_calls": logical_agent_generation_calls,
+            "executed_agent_generation_calls": executed_agent_generation_calls,
+            "reused_initial_answers": reused_initial_answers,
             "memory_generation_calls": memory_generation_calls,
-            "total_generation_calls": agent_generation_calls + memory_generation_calls,
+            "total_generation_calls": logical_agent_generation_calls + memory_generation_calls,
+            "executed_generation_calls": executed_agent_generation_calls + memory_generation_calls,
         },
         "answers_by_round": answers_by_round,
         "agent_contexts": agent_contexts,

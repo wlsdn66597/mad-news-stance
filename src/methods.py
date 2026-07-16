@@ -9,7 +9,11 @@
 """
 from collections import Counter
 
-from .debate import DEFAULT_DEBATE_TEMPLATE
+from .debate import (
+    DEFAULT_DEBATE_TEMPLATE,
+    DEFAULT_MEMORY_DEBATE_TEMPLATE,
+    DEFAULT_MEMORY_SUMMARY_TEMPLATE,
+)
 from .debate import run_debate as _debate_engine
 from .llm import build_messages, chat, strip_think
 
@@ -66,29 +70,50 @@ def run_majority(
     k=5,
     temperature=0.7,
     enable_thinking=None,
+    initial_answers=None,
 ):
     q = task.question(item, style="cot")
     messages = build_messages(q, system_prompt=sysp)
     outs, preds = [], []
-    for _ in range(k):
-        out = strip_think(
-            chat(
-                model,
-                tok,
-                messages,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                enable_thinking=enable_thinking,
+    if initial_answers is not None:
+        if len(initial_answers) != k:
+            raise ValueError("initial_answers must contain exactly k responses")
+        outs = list(initial_answers)
+        preds = [task.parse(out) for out in outs]
+    else:
+        for _ in range(k):
+            out = strip_think(
+                chat(
+                    model,
+                    tok,
+                    messages,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    enable_thinking=enable_thinking,
+                )
             )
-        )
-        outs.append(out)
-        preds.append(task.parse(out))
+            outs.append(out)
+            preds.append(task.parse(out))
     return {
         "pred": _majority(preds),
         "raw": outs,
         "preds": preds,
         "prompt": q,
         "messages": messages,
+    }
+
+
+def generate_initial_answers(
+    model, tok, task, item, sysp, max_new_tokens, n_agents,
+    temperature=0.7, enable_thinking=None,
+):
+    result = run_majority(
+        model, tok, task, item, sysp, max_new_tokens, k=n_agents,
+        temperature=temperature, enable_thinking=enable_thinking,
+    )
+    return {
+        "raw": result["raw"], "preds": result["preds"],
+        "prompt": result["prompt"], "messages": result["messages"],
     }
 
 
@@ -115,6 +140,7 @@ def run_debate(
     n_rounds=2,
     temperature=0.7,
     enable_thinking=None,
+    initial_answers=None,
 ):
     question = task.question(item, style="cot")
     template = task.debate_template or DEFAULT_DEBATE_TEMPLATE
@@ -129,6 +155,8 @@ def run_debate(
         max_new_tokens=max_new_tokens,
         temperature=temperature,
         enable_thinking=enable_thinking,
+        prompt_profile=getattr(task, "prompt_profile_name", None),
+        initial_answers=initial_answers,
     )
     return _result_from_trace(task, question, trace)
 
@@ -146,6 +174,7 @@ def run_debate_memory(
     enable_thinking=None,
     memory_max_new_tokens=256,
     memory_temperature=0.0,
+    initial_answers=None,
 ):
     question = task.question(item, style="cot")
     template = task.debate_template or DEFAULT_DEBATE_TEMPLATE
@@ -161,6 +190,11 @@ def run_debate_memory(
         temperature=temperature,
         enable_thinking=enable_thinking,
         use_memory=True,
+        memory_context=(task.memory_context(item) if hasattr(task, "memory_context") else None),
+        prompt_profile=getattr(task, "prompt_profile_name", None),
+        initial_answers=initial_answers,
+        memory_summary_template=(getattr(task, "memory_summary_template", None) or DEFAULT_MEMORY_SUMMARY_TEMPLATE),
+        memory_debate_template=(getattr(task, "memory_debate_template", None) or DEFAULT_MEMORY_DEBATE_TEMPLATE),
         memory_max_new_tokens=memory_max_new_tokens,
         memory_temperature=memory_temperature,
     )
