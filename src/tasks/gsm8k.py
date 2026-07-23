@@ -15,7 +15,9 @@ class GSM8K(Task):
         "updated answer? Examine your solution and that of other agents step by step. "
         "Put your final numeric answer after 'Answer:'."
     )
-    def load(self, split="test", n=50, seed=0):
+    def load(self, split="test", n=50, seed=0, sampling_protocol="uniform"):
+        if sampling_protocol not in {"uniform", "paper"}:
+            raise ValueError(f"unknown sampling protocol: {sampling_protocol}")
         ds = load_dataset("openai/gsm8k", "main", split=split)
         idx = list(range(len(ds)))
         random.Random(seed).shuffle(idx)
@@ -23,7 +25,7 @@ class GSM8K(Task):
         for i in idx[:n]:
             row = ds[i]
             gold = row["answer"].split("####")[-1].strip().replace(",", "")
-            items.append({"id": int(i), "q": row["question"], "gold": gold})
+            items.append({"id": int(i), "source_index": int(i), "q": row["question"], "gold": gold})
         return items
 
     def question(self, item, style="cot"):

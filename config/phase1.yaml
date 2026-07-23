@@ -3,8 +3,16 @@
 # 절대 수치보다 "debate > single/cot 경향" 재현이 목표.
 
 models:
-  qwen:
+  qwen:                         # legacy alias for Qwen3-4B
     id: Qwen/Qwen3-4B
+    system_prompt: null
+    trust_remote_code: false
+  qwen4:
+    id: Qwen/Qwen3-4B
+    system_prompt: null
+    trust_remote_code: false
+  qwen8:
+    id: Qwen/Qwen3-8B
     system_prompt: null
     trust_remote_code: false
   exaone:                       # EXAONE-4.0 = transformers 네이티브 지원(>=4.54), remote code 불필요
@@ -18,11 +26,12 @@ gpu_index: 0
 
 seed: 0
 split: test
-n: 20                           # 처음엔 작게! 확인되면 50→100 으로
+sampling_protocol: paper
+n: 100                          # paper-scale subset
 max_new_tokens: 1024            # CoT가 '정답:' 전에 잘리던 문제로 512→1024 (E2→E3)
 
 sampling:
-  temperature: 0.7              # majority/debate 다양성용 (vanilla/cot 는 greedy)
+  temperature: 1.0              # majority/debate 다양성용 (vanilla/cot 는 greedy)
 
 majority:
   k: 3                           # 논문 "Multi-Agent (Majority)": debate와 같은 agent 수(3)로 독립 생성+다수결

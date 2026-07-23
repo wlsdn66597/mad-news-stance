@@ -8,7 +8,7 @@ class Task:
     name = "base"
     debate_template = None   # task 가 언어/포맷에 맞게 제공; None 이면 debate 엔진 기본값 사용
 
-    def load(self, split, n, seed=0):
+    def load(self, split, n, seed=0, sampling_protocol="uniform"):
         """[{'id', 'gold', ...}] 형태의 아이템 리스트를 반환."""
         raise NotImplementedError
 

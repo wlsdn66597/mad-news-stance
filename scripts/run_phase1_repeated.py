@@ -26,7 +26,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = REPO_ROOT / "results" / "phase1"
 VALID_TASKS = {"gsm8k", "mmlu"}
-VALID_MODELS = {"qwen", "exaone"}
+VALID_MODELS = {"qwen", "qwen4", "qwen8", "exaone"}
 VALID_METHODS = {"vanilla", "cot", "majority", "debate", "debate_memory"}
 
 
@@ -38,10 +38,11 @@ def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="config/phase1.yaml")
     ap.add_argument("--tasks", default="gsm8k,mmlu")
-    ap.add_argument("--models", default="qwen,exaone")
+    ap.add_argument("--models", default="exaone,qwen4,qwen8")
     ap.add_argument("--methods", default="vanilla,cot,majority,debate")
     ap.add_argument("--n", type=int, default=100)
     ap.add_argument("--split", default=None)
+    ap.add_argument("--sampling-protocol", choices=["paper", "uniform"], default="paper")
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--data-seed", type=int, default=0)
     ap.add_argument("--base-run-seed", type=int, default=1000)
@@ -103,6 +104,7 @@ def build_command(args, task, model, repeat_index):
         "--methods", ",".join(args.methods),
         "--n", str(args.n),
         "--data-seed", str(args.data_seed),
+        "--sampling-protocol", args.sampling_protocol,
         "--run-seed", str(run_seed),
         "--tag", tag_for(args, repeat_index, run_seed),
     ]
@@ -233,6 +235,7 @@ def summarize(args):
             "n": args.n,
             "repeats": args.repeats,
             "data_seed": args.data_seed,
+            "sampling_protocol": args.sampling_protocol,
             "base_run_seed": args.base_run_seed,
             "tag_prefix": args.tag_prefix,
         },
@@ -247,6 +250,7 @@ def summarize(args):
         f"- n per run: {args.n}",
         f"- expected repeats: {args.repeats}",
         f"- fixed data seed: {args.data_seed}",
+        f"- sampling protocol: {args.sampling_protocol}",
         f"- run seeds: {args.base_run_seed}..{args.base_run_seed + args.repeats - 1}",
         "- stderr: sample standard deviation / sqrt(completed runs)",
         "",

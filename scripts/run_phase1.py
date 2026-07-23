@@ -38,10 +38,16 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config/phase1.yaml")
     parser.add_argument("--task", required=True, choices=list(TASKS))
-    parser.add_argument("--model", default="qwen", choices=["qwen", "exaone"])
+    parser.add_argument("--model", default="qwen", choices=["qwen", "qwen4", "qwen8", "exaone"])
     parser.add_argument("--methods", default="vanilla,cot,majority,debate")
     parser.add_argument("--n", type=int, default=None)
     parser.add_argument("--split", default=None)
+    parser.add_argument(
+        "--sampling-protocol",
+        choices=["paper", "uniform"],
+        default=None,
+        help="paper reproduces the published task sampling algorithm; uniform preserves the legacy loader.",
+    )
     parser.add_argument(
         "--data-seed",
         type=int,
@@ -110,6 +116,7 @@ def main():
     model_cfg = cfg["models"][args.model]
     n = args.n or cfg["n"]
     split = args.split or cfg["split"]
+    sampling_protocol = args.sampling_protocol or cfg.get("sampling_protocol", "uniform")
     method_list = [method.strip() for method in args.methods.split(",") if method.strip()]
     unknown = sorted(set(method_list) - set(METHOD_FNS))
     if unknown:
@@ -117,7 +124,7 @@ def main():
 
     data_seed = cfg["seed"] if args.data_seed is None else args.data_seed
     run_seed = cfg["seed"] if args.run_seed is None else args.run_seed
-    enable_thinking = False if args.model == "qwen" else None
+    enable_thinking = False if args.model.startswith("qwen") else None
     system_prompt = model_cfg.get("system_prompt")
     max_new_tokens = args.max_new_tokens or cfg["max_new_tokens"]
     temperature = (
@@ -127,12 +134,12 @@ def main():
     )
     print(
         f"[cfg] data_seed={data_seed} run_seed={run_seed} "
-        f"temperature={temperature} max_new_tokens={max_new_tokens}"
+        f"sampling_protocol={sampling_protocol} temperature={temperature} max_new_tokens={max_new_tokens}"
     )
 
     task = TASKS[args.task]()
-    items = task.load(split=split, n=n, seed=data_seed)
-    print(f"[data] {task.name} split={split} n={len(items)}")
+    items = task.load(split=split, n=n, seed=data_seed, sampling_protocol=sampling_protocol)
+    print(f"[data] {task.name} split={split} n={len(items)} sampling={sampling_protocol}")
 
     set_seed(run_seed)
     model, tokenizer = load_model(
@@ -175,6 +182,11 @@ def main():
                 **kwargs,
             )
             result["gold"] = item["gold"]
+            result["item"] = {
+                field: item[field]
+                for field in ("id", "draw_index", "source_index", "subject")
+                if field in item
+            }
             result["correct"] = bool(task.correct(result["pred"], item))
             result["generation_seed"] = item_seed
             done[key] = result
@@ -192,7 +204,7 @@ def main():
     print("\n===== SUMMARY =====")
     print(
         f"task={task.name} model={args.model} n={n} "
-        f"data_seed={data_seed} run_seed={run_seed}"
+        f"data_seed={data_seed} run_seed={run_seed} sampling={sampling_protocol}"
     )
     for method in method_list:
         values = results.get(method, {})
