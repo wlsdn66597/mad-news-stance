@@ -15,7 +15,7 @@ models:
     id: Qwen/Qwen3-8B
     system_prompt: null
     trust_remote_code: false
-  exaone:
+  exaone:                       # 3.5 remote-code mask compatibility: src/llm.py
     id: LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct
     system_prompt: null
     trust_remote_code: true

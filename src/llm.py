@@ -3,9 +3,45 @@
 공용 GPU 를 고려해 프로세스 메모리 상한을 걸 수 있게 했고,
 모델마다 다른 chat template 을 tokenizer.apply_chat_template 로 처리한다.
 """
+import inspect
 import re
+from functools import wraps
+
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+
+def _install_exaone35_causal_mask_compat(masking_module=None):
+    """Temporarily adapt EXAONE 3.5 remote code to newer Transformers APIs."""
+    if masking_module is None:
+        try:
+            from transformers import masking_utils as masking_module
+        except ImportError:
+            return None
+
+    original = masking_module.create_causal_mask
+    parameters = inspect.signature(original).parameters
+    if "input_embeds" in parameters or "inputs_embeds" not in parameters:
+        return None
+
+    @wraps(original)
+    def compatible_create_causal_mask(*args, **kwargs):
+        if "input_embeds" in kwargs and "inputs_embeds" not in kwargs:
+            kwargs["inputs_embeds"] = kwargs.pop("input_embeds")
+        if "cache_position" not in parameters:
+            kwargs.pop("cache_position", None)
+        return original(*args, **kwargs)
+
+    masking_module.create_causal_mask = compatible_create_causal_mask
+    return masking_module, original, compatible_create_causal_mask
+
+
+def _restore_causal_mask(patch_state):
+    if patch_state is None:
+        return
+    masking_module, original, installed = patch_state
+    if masking_module.create_causal_mask is installed:
+        masking_module.create_causal_mask = original
 
 
 def load_model(model_id, load_in_4bit=True, gpu_index=0, mem_fraction=None,
@@ -24,16 +60,22 @@ def load_model(model_id, load_in_4bit=True, gpu_index=0, mem_fraction=None,
             bnb_4bit_use_double_quant=True,
         )
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_id, trust_remote_code=trust_remote_code
-    )
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        quantization_config=quant_config,
-        torch_dtype=torch.bfloat16,
-        device_map={"": f"cuda:{gpu_index}"},
-        trust_remote_code=trust_remote_code,
-    )
+    patch_state = None
+    if "EXAONE-3.5" in model_id.upper():
+        patch_state = _install_exaone35_causal_mask_compat()
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_id, trust_remote_code=trust_remote_code
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            quantization_config=quant_config,
+            torch_dtype=torch.bfloat16,
+            device_map={"": f"cuda:{gpu_index}"},
+            trust_remote_code=trust_remote_code,
+        )
+    finally:
+        _restore_causal_mask(patch_state)
     model.eval()
     return model, tokenizer
 
