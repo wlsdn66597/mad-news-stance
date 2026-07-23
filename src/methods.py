@@ -13,6 +13,7 @@ from .debate import (
     DEFAULT_DEBATE_TEMPLATE,
     DEFAULT_MEMORY_DEBATE_TEMPLATE,
     DEFAULT_MEMORY_SUMMARY_TEMPLATE,
+    format_paper_others,
 )
 from .debate import run_debate as _debate_engine
 from .llm import build_messages, chat, strip_think
@@ -60,6 +61,67 @@ def run_cot(
     )
 
 
+def run_single(
+    model, tok, task, item, sysp, max_new_tokens, temperature=0.7, enable_thinking=None
+):
+    """논문 Single Agent: 공개 코드의 reasoning 프롬프트로 한 번 생성."""
+    return _one(
+        model, tok, task, item, sysp, max_new_tokens, temperature, "paper", enable_thinking
+    )
+
+
+def run_reflection(
+    model, tok, task, item, sysp, max_new_tokens, temperature=0.7, enable_thinking=None
+):
+    """논문 Single Agent (Reflection): 최초 답변 뒤 동일 agent가 self-check."""
+    question = task.question(item, style="paper")
+    reflection_prompt = task.reflection_template
+    if not reflection_prompt:
+        raise ValueError(f"task {task.name} does not define a reflection prompt")
+
+    messages = build_messages(question, system_prompt=sysp)
+    initial = strip_think(
+        chat(
+            model,
+            tok,
+            messages,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            enable_thinking=enable_thinking,
+        )
+    )
+    messages.append({"role": "assistant", "content": initial})
+    messages.append({"role": "user", "content": reflection_prompt})
+    revised = strip_think(
+        chat(
+            model,
+            tok,
+            messages,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            enable_thinking=enable_thinking,
+        )
+    )
+    messages.append({"role": "assistant", "content": revised})
+    initial_pred = task.parse(initial)
+    final_pred = task.parse(revised)
+    return {
+        "pred": final_pred,
+        "raw": [initial, revised],
+        "preds": [initial_pred, final_pred],
+        "prompt": question,
+        "messages": messages,
+        "reflection_trace": {
+            "initial_answer": initial,
+            "initial_pred": initial_pred,
+            "reflection_prompt": reflection_prompt,
+            "final_answer": revised,
+            "final_pred": final_pred,
+            "generation_calls": 2,
+        },
+    }
+
+
 def run_majority(
     model,
     tok,
@@ -71,8 +133,9 @@ def run_majority(
     temperature=0.7,
     enable_thinking=None,
     initial_answers=None,
+    initial_style="cot",
 ):
-    q = task.question(item, style="cot")
+    q = task.question(item, style=initial_style)
     messages = build_messages(q, system_prompt=sysp)
     outs, preds = [], []
     if initial_answers is not None:
@@ -141,9 +204,15 @@ def run_debate(
     temperature=0.7,
     enable_thinking=None,
     initial_answers=None,
+    initial_style="cot",
 ):
-    question = task.question(item, style="cot")
-    template = task.debate_template or DEFAULT_DEBATE_TEMPLATE
+    question = task.question(item, style=initial_style)
+    paper_template = getattr(task, "paper_debate_template", None)
+    template = (
+        paper_template
+        if initial_style == "paper" and paper_template
+        else (task.debate_template or DEFAULT_DEBATE_TEMPLATE)
+    )
     trace = _debate_engine(
         model,
         tok,
@@ -157,6 +226,9 @@ def run_debate(
         enable_thinking=enable_thinking,
         prompt_profile=getattr(task, "prompt_profile_name", None),
         initial_answers=initial_answers,
+        other_answers_formatter=(
+            format_paper_others if initial_style == "paper" else None
+        ),
     )
     return _result_from_trace(task, question, trace)
 

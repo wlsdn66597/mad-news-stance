@@ -27,7 +27,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = REPO_ROOT / "results" / "phase1"
 VALID_TASKS = {"gsm8k", "mmlu"}
 VALID_MODELS = {"qwen", "qwen4", "qwen8", "exaone"}
-VALID_METHODS = {"vanilla", "cot", "majority", "debate", "debate_memory"}
+PAPER_METHODS = {
+    "gsm8k": ["single", "reflection", "majority", "debate"],
+    "mmlu": ["single", "reflection", "debate"],
+}
+VALID_METHODS = {
+    "vanilla", "cot", "single", "reflection", "majority", "debate", "debate_memory"
+}
 
 
 def csv_list(value):
@@ -39,7 +45,14 @@ def parse_args():
     ap.add_argument("--config", default="config/phase1.yaml")
     ap.add_argument("--tasks", default="gsm8k,mmlu")
     ap.add_argument("--models", default="exaone,qwen4,qwen8")
-    ap.add_argument("--methods", default="vanilla,cot,majority,debate")
+    ap.add_argument(
+        "--methods",
+        default="paper",
+        help=(
+            "'paper' uses GSM8K=single,reflection,majority,debate and "
+            "MMLU=single,reflection,debate."
+        ),
+    )
     ap.add_argument("--n", type=int, default=100)
     ap.add_argument("--split", default=None)
     ap.add_argument("--sampling-protocol", choices=["paper", "uniform"], default="paper")
@@ -70,7 +83,6 @@ def validate(args):
     checks = [
         ("tasks", args.tasks, VALID_TASKS),
         ("models", args.models, VALID_MODELS),
-        ("methods", args.methods, VALID_METHODS),
     ]
     for name, values, valid in checks:
         if not values:
@@ -78,10 +90,20 @@ def validate(args):
         unknown = sorted(set(values) - valid)
         if unknown:
             raise ValueError(f"unknown {name}: {', '.join(unknown)}")
+    if args.methods != ["paper"]:
+        if "paper" in args.methods:
+            raise ValueError("'paper' cannot be combined with explicit method names")
+        unknown = sorted(set(args.methods) - VALID_METHODS)
+        if unknown:
+            raise ValueError(f"unknown methods: {', '.join(unknown)}")
     if args.n <= 0:
         raise ValueError("--n must be positive")
     if args.repeats < 2:
         raise ValueError("stderr 계산을 위해 --repeats는 2 이상이어야 합니다")
+
+
+def methods_for_task(args, task):
+    return PAPER_METHODS[task] if args.methods == ["paper"] else args.methods
 
 
 def tag_for(args, repeat_index, run_seed):
@@ -101,7 +123,7 @@ def build_command(args, task, model, repeat_index):
         "--config", args.config,
         "--task", task,
         "--model", model,
-        "--methods", ",".join(args.methods),
+        "--methods", ",".join(methods_for_task(args, task)),
         "--n", str(args.n),
         "--data-seed", str(args.data_seed),
         "--sampling-protocol", args.sampling_protocol,
@@ -149,7 +171,7 @@ def summarize(args):
     details = []
     for task in args.tasks:
         for model in args.models:
-            for method in args.methods:
+            for method in methods_for_task(args, task):
                 accuracies = []
                 run_details = []
                 for repeat_index in range(args.repeats):
@@ -232,6 +254,9 @@ def summarize(args):
             "tasks": args.tasks,
             "models": args.models,
             "methods": args.methods,
+            "resolved_methods": {
+                task: methods_for_task(args, task) for task in args.tasks
+            },
             "n": args.n,
             "repeats": args.repeats,
             "data_seed": args.data_seed,

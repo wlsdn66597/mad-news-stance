@@ -38,6 +38,13 @@ def format_others(other_answers):
     return "\n\n".join(f"[Agent {i + 1}]\n{ans}" for i, ans in enumerate(other_answers))
 
 
+def format_paper_others(other_answers):
+    """Du et al. 공개 코드가 다른 agent 응답을 연결하는 형식."""
+    return "".join(
+        f"\n\n One agent solution: ```{answer}```" for answer in other_answers
+    )
+
+
 def format_round_answers(round_answers):
     return "\n\n".join(
         f"[Agent {i + 1}]\n{answer}" for i, answer in enumerate(round_answers)
@@ -87,6 +94,7 @@ def run_debate(
     memory_debate_template=DEFAULT_MEMORY_DEBATE_TEMPLATE,
     memory_max_new_tokens=256,
     memory_temperature=0.0,
+    other_answers_formatter=None,
 ):
     if n_agents < 1:
         raise ValueError("n_agents must be at least 1")
@@ -94,6 +102,8 @@ def run_debate(
         raise ValueError("n_rounds must be at least 1")
     if initial_answers is not None and len(initial_answers) != n_agents:
         raise ValueError("initial_answers must contain exactly n_agents responses")
+    if other_answers_formatter is None:
+        other_answers_formatter = format_others
 
     agent_contexts = [
         build_messages(question, system_prompt=system_prompt) for _ in range(n_agents)
@@ -147,8 +157,10 @@ def run_debate(
                     for other_index in range(n_agents)
                     if other_index != agent_index
                 ]
-                direct_context = format_others(others)
-                direct_prompt = debate_template.format(others=direct_context)
+                direct_context = other_answers_formatter(others)
+                direct_prompt = debate_template.format(
+                    others=direct_context, question=question
+                )
                 direct_contexts.append(direct_prompt)
                 if use_memory:
                     debate_prompt = memory_debate_template.format(memory=memory)
@@ -235,6 +247,11 @@ def run_debate(
         "n_rounds": n_rounds,
         "communication_mode": "shared_summary" if use_memory else "direct_concat",
         "prompt_profile": prompt_profile,
+        "other_answers_format": (
+            "paper_one_agent_solution"
+            if other_answers_formatter is format_paper_others
+            else "labeled_agents"
+        ),
         "initial_answer_source": "provided" if initial_answers is not None else "generated",
         "generation_config": {
             "max_new_tokens": max_new_tokens,

@@ -1,6 +1,8 @@
 # ── Phase 1: 논문 재현 (GSM8K / MMLU) ─────────────────────────
-# 소량 서브셋에서 vanilla / cot / majority / debate 정확도를 비교한다.
-# 절대 수치보다 "debate > single/cot 경향" 재현이 목표.
+# 논문 비교군:
+# GSM8K = single / reflection / majority / debate
+# MMLU  = single / reflection / debate
+# 기존 vanilla / cot 이름은 과거 결과 호환을 위해 유지한다.
 
 models:
   qwen:                         # legacy alias for Qwen3-4B
@@ -31,7 +33,7 @@ n: 100                          # paper-scale subset
 max_new_tokens: 1024            # CoT가 '정답:' 전에 잘리던 문제로 512→1024 (E2→E3)
 
 sampling:
-  temperature: 1.0              # majority/debate 다양성용 (vanilla/cot 는 greedy)
+  temperature: 1.0              # 공개 코드의 ChatCompletion 기본 sampling 온도
 
 majority:
   k: 3                           # 논문 "Multi-Agent (Majority)": debate와 같은 agent 수(3)로 독립 생성+다수결

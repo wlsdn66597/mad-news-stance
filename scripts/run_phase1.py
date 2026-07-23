@@ -25,9 +25,15 @@ from src.tasks.gsm8k import GSM8K        # noqa: E402
 from src.tasks.mmlu import MMLU          # noqa: E402
 
 TASKS = {"gsm8k": GSM8K, "mmlu": MMLU}
+PAPER_METHODS = {
+    "gsm8k": ["single", "reflection", "majority", "debate"],
+    "mmlu": ["single", "reflection", "debate"],
+}
 METHOD_FNS = {
     "vanilla": methods.run_vanilla,
     "cot": methods.run_cot,
+    "single": methods.run_single,
+    "reflection": methods.run_reflection,
     "majority": methods.run_majority,
     "debate": methods.run_debate,
     "debate_memory": methods.run_debate_memory,
@@ -39,7 +45,15 @@ def parse_args():
     parser.add_argument("--config", default="config/phase1.yaml")
     parser.add_argument("--task", required=True, choices=list(TASKS))
     parser.add_argument("--model", default="qwen", choices=["qwen", "qwen4", "qwen8", "exaone"])
-    parser.add_argument("--methods", default="vanilla,cot,majority,debate")
+    parser.add_argument(
+        "--methods",
+        default="paper",
+        help=(
+            "'paper' selects the published comparison set per task: "
+            "GSM8K=single,reflection,majority,debate; "
+            "MMLU=single,reflection,debate."
+        ),
+    )
     parser.add_argument("--n", type=int, default=None)
     parser.add_argument("--split", default=None)
     parser.add_argument(
@@ -89,6 +103,9 @@ def method_kwargs(method, cfg, args, temperature):
     kwargs = {"temperature": temperature}
     if method == "majority":
         kwargs["k"] = args.k or cfg["majority"]["k"]
+        kwargs["initial_style"] = "paper"
+    if method == "debate":
+        kwargs["initial_style"] = "paper"
     if method in {"debate", "debate_memory"}:
         kwargs["n_agents"] = args.n_agents or cfg["debate"]["n_agents"]
         kwargs["n_rounds"] = args.n_rounds or cfg["debate"]["n_rounds"]
@@ -117,7 +134,15 @@ def main():
     n = args.n or cfg["n"]
     split = args.split or cfg["split"]
     sampling_protocol = args.sampling_protocol or cfg.get("sampling_protocol", "uniform")
-    method_list = [method.strip() for method in args.methods.split(",") if method.strip()]
+    requested_methods = [
+        method.strip() for method in args.methods.split(",") if method.strip()
+    ]
+    if requested_methods == ["paper"]:
+        method_list = PAPER_METHODS[args.task]
+    else:
+        if "paper" in requested_methods:
+            raise ValueError("'paper' cannot be combined with explicit method names")
+        method_list = requested_methods
     unknown = sorted(set(method_list) - set(METHOD_FNS))
     if unknown:
         raise ValueError(f"unknown methods: {', '.join(unknown)}")

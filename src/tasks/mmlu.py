@@ -14,6 +14,17 @@ LETTERS = ["A", "B", "C", "D"]
 
 class MMLU(Task):
     name = "mmlu"
+    # composable-models/llm_multiagent_debate mmlu/gen_mmlu.py 원문.
+    reflection_template = (
+        "Can you double check that your answer is correct. Put your final answer in "
+        "the form (X) at the end of your response."
+    )
+    paper_debate_template = (
+        "These are the solutions to the problem from other agents: {others}"
+        "\n\n Using the reasoning from other agents as additional advice, can you "
+        "give an updated answer? Examine your solution and that other agents step "
+        "by step. Put your answer in the form (X) at the end of your response."
+    )
     # 논문 gen_mmlu.py construct_message 원문
     debate_template = (
         "These are the solutions to the problem from other agents:\n\n{others}\n\n"
@@ -60,7 +71,7 @@ class MMLU(Task):
     def question(self, item, style="cot"):
         opts = ", ".join(f"{LETTERS[j]}) {c}" for j, c in enumerate(item["choices"]))
         base = f"{item['q']}: {opts}"
-        if style == "cot":
+        if style in {"cot", "paper"}:
             # 논문 원문 프롬프트 (설명 포함 = single-agent baseline)
             return (f"Can you answer the following question as accurately as possible? {base} "
                     "Explain your answer, putting the answer in the form (X) at the end of your response.")
