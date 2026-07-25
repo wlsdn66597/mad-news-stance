@@ -167,12 +167,22 @@ def run_majority(
 
 
 def generate_initial_answers(
-    model, tok, task, item, sysp, max_new_tokens, n_agents,
-    temperature=0.7, enable_thinking=None,
+    model,
+    tok,
+    task,
+    item,
+    sysp,
+    max_new_tokens,
+    n_agents,
+    temperature=0.7,
+    enable_thinking=None,
+    initial_style="cot",
 ):
+    """Generate one reusable Round 0 population for paired comparisons."""
     result = run_majority(
         model, tok, task, item, sysp, max_new_tokens, k=n_agents,
         temperature=temperature, enable_thinking=enable_thinking,
+        initial_style=initial_style,
     )
     return {
         "raw": result["raw"], "preds": result["preds"],

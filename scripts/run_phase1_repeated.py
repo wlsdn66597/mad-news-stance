@@ -67,6 +67,23 @@ def parse_args():
     ap.add_argument("--k", type=int, default=None)
     ap.add_argument("--memory-max-new-tokens", type=int, default=None)
     ap.add_argument("--memory-temperature", type=float, default=None)
+    shared_group = ap.add_mutually_exclusive_group()
+    shared_group.add_argument(
+        "--shared-round0",
+        dest="shared_round0",
+        action="store_true",
+        default=None,
+        help=(
+            "Reuse identical initial answers for Majority and Debate. "
+            "Enabled by default for GSM8K --methods paper."
+        ),
+    )
+    shared_group.add_argument(
+        "--independent-round0",
+        dest="shared_round0",
+        action="store_false",
+        help="Generate separate initial answers for Majority and Debate.",
+    )
     ap.add_argument("--summarize-only", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument(
@@ -143,6 +160,15 @@ def build_command(args, task, model, repeat_index):
     for flag, value in optional:
         if value is not None:
             command.extend([flag, str(value)])
+    share_round0 = (
+        args.shared_round0
+        if args.shared_round0 is not None
+        else args.methods == ["paper"] and task == "gsm8k"
+    )
+    if share_round0:
+        command.append("--shared-round0")
+    elif args.shared_round0 is False:
+        command.append("--independent-round0")
     return command
 
 

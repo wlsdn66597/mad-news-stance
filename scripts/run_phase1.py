@@ -91,6 +91,23 @@ def parse_args():
         default=None,
         help="shared memory 요약 생성 온도",
     )
+    shared_group = parser.add_mutually_exclusive_group()
+    shared_group.add_argument(
+        "--shared-round0",
+        dest="shared_round0",
+        action="store_true",
+        default=None,
+        help=(
+            "Reuse identical item-level initial agent answers for Majority and Debate. "
+            "Enabled by default for GSM8K --methods paper."
+        ),
+    )
+    shared_group.add_argument(
+        "--independent-round0",
+        dest="shared_round0",
+        action="store_false",
+        help="Generate separate initial answers for Majority and Debate.",
+    )
     parser.add_argument("--tag", default="")
     return parser.parse_args()
 
@@ -137,7 +154,8 @@ def main():
     requested_methods = [
         method.strip() for method in args.methods.split(",") if method.strip()
     ]
-    if requested_methods == ["paper"]:
+    paper_mode = requested_methods == ["paper"]
+    if paper_mode:
         method_list = PAPER_METHODS[args.task]
     else:
         if "paper" in requested_methods:
@@ -146,6 +164,24 @@ def main():
     unknown = sorted(set(method_list) - set(METHOD_FNS))
     if unknown:
         raise ValueError(f"unknown methods: {', '.join(unknown)}")
+
+    paired_methods = {"majority", "debate"}.issubset(method_list)
+    share_round0 = (
+        args.shared_round0
+        if args.shared_round0 is not None
+        else paper_mode and paired_methods
+    )
+    shared_n_agents = args.n_agents or cfg["debate"]["n_agents"]
+    majority_k = args.k or cfg["majority"]["k"]
+    if share_round0 and not paired_methods:
+        raise ValueError(
+            "--shared-round0 requires both majority and debate in --methods"
+        )
+    if share_round0 and majority_k != shared_n_agents:
+        raise ValueError(
+            "shared Round 0 requires majority.k == debate.n_agents "
+            f"(got {majority_k} and {shared_n_agents})"
+        )
 
     data_seed = cfg["seed"] if args.data_seed is None else args.data_seed
     run_seed = cfg["seed"] if args.run_seed is None else args.run_seed
@@ -159,7 +195,8 @@ def main():
     )
     print(
         f"[cfg] data_seed={data_seed} run_seed={run_seed} "
-        f"sampling_protocol={sampling_protocol} temperature={temperature} max_new_tokens={max_new_tokens}"
+        f"sampling_protocol={sampling_protocol} temperature={temperature} "
+        f"max_new_tokens={max_new_tokens} shared_round0={share_round0}"
     )
 
     task = TASKS[args.task]()
@@ -184,6 +221,31 @@ def main():
     else:
         results = {}
 
+    previous_mode = results.get("_meta", {}).get("shared_round0")
+    if previous_mode is not None and bool(previous_mode) != share_round0:
+        raise ValueError(
+            "output file was created with a different shared_round0 setting; "
+            "use a new --tag or resume with the original setting"
+        )
+    results.setdefault("_meta", {}).update(
+        {
+            "shared_round0": share_round0,
+            "shared_round0_protocol": (
+                "paired_majority_debate_v1" if share_round0 else None
+            ),
+            "shared_round0_agents": shared_n_agents if share_round0 else None,
+        }
+    )
+    shared_initials = (
+        results.setdefault("_shared_round0", {}) if share_round0 else {}
+    )
+
+    def save_results():
+        with open(out_path, "w", encoding="utf-8") as handle:
+            json.dump(results, handle, ensure_ascii=False, indent=2)
+
+    save_results()
+
     for method in method_list:
         function = METHOD_FNS[method]
         kwargs = method_kwargs(method, cfg, args, temperature)
@@ -191,8 +253,62 @@ def main():
         start = time.time()
         for item in items:
             key = str(item["id"])
+
+            # Resume safely from an older partial run by adopting its exact
+            # completed Majority responses as the shared Round 0 population.
+            if (
+                share_round0
+                and method == "majority"
+                and key in done
+                and key not in shared_initials
+                and len(done[key].get("raw", [])) == shared_n_agents
+            ):
+                shared_initials[key] = {
+                    "raw": done[key]["raw"],
+                    "preds": done[key].get("preds", []),
+                    "prompt": done[key].get("prompt"),
+                    "messages": done[key].get("messages"),
+                    "generation_seed": done[key].get("generation_seed"),
+                    "initial_style": "paper",
+                }
+                save_results()
+
             if key in done:
                 continue
+
+            item_kwargs = dict(kwargs)
+            shared_seed = None
+            if share_round0 and method in {"majority", "debate"}:
+                shared = shared_initials.get(key)
+                if shared is None:
+                    shared_seed = generation_seed(
+                        run_seed, task.name, "shared_round0", key
+                    )
+                    set_seed(shared_seed)
+                    shared = methods.generate_initial_answers(
+                        model,
+                        tokenizer,
+                        task,
+                        item,
+                        system_prompt,
+                        max_new_tokens,
+                        n_agents=shared_n_agents,
+                        temperature=temperature,
+                        enable_thinking=enable_thinking,
+                        initial_style="paper",
+                    )
+                    shared.update(
+                        {
+                            "generation_seed": shared_seed,
+                            "initial_style": "paper",
+                        }
+                    )
+                    shared_initials[key] = shared
+                    # Persist before Debate so a crash cannot regenerate a
+                    # different Round 0 population during resume.
+                    save_results()
+                shared_seed = shared.get("generation_seed")
+                item_kwargs["initial_answers"] = list(shared["raw"])
 
             item_seed = generation_seed(run_seed, task.name, method, key)
             set_seed(item_seed)
@@ -204,7 +320,7 @@ def main():
                 system_prompt,
                 max_new_tokens,
                 enable_thinking=enable_thinking,
-                **kwargs,
+                **item_kwargs,
             )
             result["gold"] = item["gold"]
             result["item"] = {
@@ -213,10 +329,16 @@ def main():
                 if field in item
             }
             result["correct"] = bool(task.correct(result["pred"], item))
-            result["generation_seed"] = item_seed
+            result["generation_seed"] = (
+                shared_seed
+                if method == "majority" and shared_seed is not None
+                else item_seed
+            )
+            if shared_seed is not None:
+                result["shared_round0_seed"] = shared_seed
+                result["shared_round0_key"] = key
             done[key] = result
-            with open(out_path, "w", encoding="utf-8") as handle:
-                json.dump(results, handle, ensure_ascii=False, indent=2)
+            save_results()
 
         n_done = len(done)
         n_correct = sum(value["correct"] for value in done.values())

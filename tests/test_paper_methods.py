@@ -102,5 +102,22 @@ class PaperMethodsTest(unittest.TestCase):
         self.assertIs(captured["other_answers_formatter"], methods.format_paper_others)
 
 
+    def test_generate_initial_answers_uses_requested_style(self):
+        seen = []
+
+        def fake_chat(model, tokenizer, messages, **kwargs):
+            seen.append(deepcopy(messages))
+            return "answer A"
+
+        with patch.object(methods, "chat", side_effect=fake_chat):
+            result = methods.generate_initial_answers(
+                None, None, FakeTask(), {}, None, 32, n_agents=2,
+                initial_style="paper",
+            )
+
+        self.assertEqual(result["prompt"], "PAPER QUESTION")
+        self.assertEqual(len(seen), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
