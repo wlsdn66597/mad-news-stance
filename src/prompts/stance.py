@@ -21,6 +21,9 @@ class StancePromptProfile:
     debate_template: str
     memory_summary_template: Optional[str] = None
     memory_debate_template: Optional[str] = None
+    instruction_first: bool = False
+    article_heading_en: str = "Article (Korean)"
+    other_agent_template: str = "[Agent {index}]\n{answer}"
 
     def article_block(self, item):
         if self.language == "ko":
@@ -32,16 +35,23 @@ class StancePromptProfile:
         return (
             f"Issue: {item['issue']}\n"
             f"Headline: {item['headline']}\n"
-            f"Article (Korean):\n{item['article']}"
+            f"{self.article_heading_en}:\n{item['article']}"
         )
 
     def question(self, item, style="cot"):
         instruction = self.cot_instruction if style == "cot" else self.vanilla_instruction
+        if self.instruction_first:
+            return f"{instruction}\n\n{self.article_block(item)}"
         return f"{self.article_block(item)}\n\n{instruction}"
 
     def memory_context(self, item):
         return self.article_block(item)
 
+    def format_other_answers(self, answers):
+        return "\n\n".join(
+            self.other_agent_template.format(index=index, answer=answer)
+            for index, answer in enumerate(answers, start=1)
+        )
 
 LEGACY_KO = StancePromptProfile(
     name="legacy_ko",
@@ -161,6 +171,35 @@ STANCE_V2_EN_GENERIC_MEMORY = replace(
 )
 
 
+STANCE_MINIMAL_EN = StancePromptProfile(
+    name="stance_minimal_en",
+    language="en",
+    cot_instruction=(
+        "Classify this article's stance toward the specified issue as one of "
+        "supportive, oppositional, or neutral.\n"
+        "Briefly explain your reasoning, and answer on the final line in exactly "
+        "this format:\n\n"
+        + LABEL_LINE_EN
+    ),
+    vanilla_instruction=(
+        "Classify this article's stance toward the specified issue as one of "
+        "supportive, oppositional, or neutral. Answer on the final line in exactly "
+        "this format:\n\n"
+        + LABEL_LINE_EN
+    ),
+    debate_template=(
+        "Use the other agents' responses as additional information and reconsider "
+        "your previous judgment.\n"
+        "Briefly explain your reasoning, and answer on the final line in exactly "
+        "this format:\n\n"
+        + LABEL_LINE_EN
+        + "\n\nThe other agents' judgments are as follows:\n\n{others}"
+    ),
+    instruction_first=True,
+    article_heading_en="Article",
+    other_agent_template="Agent {index}:\n{answer}",
+)
+
 STANCE_V2_KO = StancePromptProfile(
     name="stance_v2_ko",
     language="ko",
@@ -233,7 +272,13 @@ STANCE_V2_KO = StancePromptProfile(
 
 PROFILES = {
     profile.name: profile
-    for profile in (LEGACY_KO, STANCE_V2_EN, STANCE_V2_EN_GENERIC_MEMORY, STANCE_V2_KO)
+    for profile in (
+        LEGACY_KO,
+        STANCE_V2_EN,
+        STANCE_V2_EN_GENERIC_MEMORY,
+        STANCE_MINIMAL_EN,
+        STANCE_V2_KO,
+    )
 }
 
 

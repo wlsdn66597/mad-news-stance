@@ -237,7 +237,9 @@ def run_debate(
         prompt_profile=getattr(task, "prompt_profile_name", None),
         initial_answers=initial_answers,
         other_answers_formatter=(
-            format_paper_others if initial_style == "paper" else None
+            format_paper_others
+            if initial_style == "paper"
+            else getattr(task, "format_other_answers", None)
         ),
     )
     return _result_from_trace(task, question, trace)

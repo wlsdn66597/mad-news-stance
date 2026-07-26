@@ -54,6 +54,9 @@ class Stance(Task):
     def memory_context(self, item):
         return self.prompt_profile.memory_context(item)
 
+    def format_other_answers(self, answers):
+        return self.prompt_profile.format_other_answers(answers)
+
     def parse(self, text):
         lowered = text.lower()
         final_patterns = [

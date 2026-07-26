@@ -40,6 +40,18 @@ class StancePromptProfileTest(unittest.TestCase):
         self.assertIn("[Authorial evidence]", prompt)
         self.assertIn("Do not decide the final label", prompt)
 
+    def test_minimal_english_profile_matches_slide_format(self):
+        task = Stance(prompt_profile="stance_minimal_en")
+        prompt = task.question(ITEM, style="cot")
+        self.assertTrue(prompt.startswith("Classify this article's stance"))
+        self.assertLess(prompt.index("Final stance:"), prompt.index("Issue:"))
+        self.assertIn("Article:\n" + ITEM["article"], prompt)
+        self.assertNotIn("Article (Korean):", prompt)
+        formatted = task.format_other_answers(["First", "Second"])
+        self.assertEqual(formatted, "Agent 1:\nFirst\n\nAgent 2:\nSecond")
+        debate = task.debate_template.format(others=formatted)
+        self.assertLess(debate.index("Final stance:"), debate.index("Agent 1:"))
+
     def test_parser_accepts_both_final_markers(self):
         task = Stance(prompt_profile="stance_v2_en")
         self.assertEqual(task.parse("Final stance: supportive"), "supportive")
