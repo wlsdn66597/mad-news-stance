@@ -15,7 +15,7 @@ from transformers import set_seed
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import methods  # noqa: E402
-from src.llm import load_model  # noqa: E402
+from src.llm import load_model, model_context_window  # noqa: E402
 from src.metrics import LABELS_DEFAULT, format_report  # noqa: E402
 from src.prompts.stance import PROFILES  # noqa: E402
 from src.tasks.stance import Stance  # noqa: E402
@@ -138,6 +138,10 @@ def main():
         mem_fraction=cfg["mem_fraction"],
         trust_remote_code=model_cfg.get("trust_remote_code", False),
     )
+    context_window = model_context_window(model, tokenizer)
+    print(
+        f"[tokens] max_new_tokens={max_new_tokens} context_window={context_window}"
+    )
 
     tag = f"_{args.tag}" if args.tag else ""
     out_path = Path(
@@ -161,6 +165,8 @@ def main():
         "data_seed": data_seed,
         "run_seed": run_seed,
         "temperature": temperature,
+        "max_new_tokens": max_new_tokens,
+        "context_window": context_window,
         "n_agents": n_agents,
         "n_rounds": n_rounds,
         "share_round0": share_round0,

@@ -15,7 +15,9 @@ gpu_index: 0
 seed: 0
 split: test
 n: 100
-max_new_tokens: 256
+# Output budget only. Long article inputs are kept intact and checked against
+# Qwen3-8B's context window before every generation.
+max_new_tokens: 1024
 
 sampling:
   temperature: 1.0

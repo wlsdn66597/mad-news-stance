@@ -80,6 +80,34 @@ def load_model(model_id, load_in_4bit=True, gpu_index=0, mem_fraction=None,
     return model, tokenizer
 
 
+def model_context_window(model, tokenizer):
+    """Return the smallest finite context limit advertised by model/tokenizer."""
+    candidates = []
+    for value in (
+        getattr(getattr(model, "config", None), "max_position_embeddings", None),
+        getattr(tokenizer, "model_max_length", None),
+    ):
+        if isinstance(value, int) and 0 < value < 1_000_000:
+            candidates.append(value)
+    return min(candidates) if candidates else None
+
+
+def validate_context_budget(model, tokenizer, input_tokens, max_new_tokens):
+    """Fail before generation when the prompt plus output budget exceeds context."""
+    context_window = model_context_window(model, tokenizer)
+    if context_window is None:
+        return None
+    required = input_tokens + max_new_tokens
+    if required > context_window:
+        raise ValueError(
+            "context window exceeded: "
+            f"input_tokens={input_tokens} + max_new_tokens={max_new_tokens} "
+            f"> context_window={context_window}. "
+            "Reduce the article/prompt or max_new_tokens; input is not truncated."
+        )
+    return context_window
+
+
 def build_messages(user_content, system_prompt=None, history=None):
     """chat 메시지 리스트를 구성한다."""
     messages = []
@@ -103,6 +131,9 @@ def chat(model, tokenizer, messages, max_new_tokens=256, temperature=0.7,
         messages, tokenize=False, add_generation_prompt=True, **template_kwargs
     )
     inputs = tokenizer(text, return_tensors="pt").to(model.device)
+    validate_context_budget(
+        model, tokenizer, inputs["input_ids"].shape[1], max_new_tokens
+    )
 
     gen_kwargs = dict(max_new_tokens=max_new_tokens, pad_token_id=tokenizer.eos_token_id)
     if temperature and temperature > 0:
