@@ -62,12 +62,49 @@ def run_cot(
 
 
 def run_single(
-    model, tok, task, item, sysp, max_new_tokens, temperature=0.7, enable_thinking=None
+    model,
+    tok,
+    task,
+    item,
+    sysp,
+    max_new_tokens,
+    temperature=0.7,
+    enable_thinking=None,
+    initial_answers=None,
+    initial_style="cot",
 ):
-    """논문 Single Agent: 공개 코드의 reasoning 프롬프트로 한 번 생성."""
-    return _one(
-        model, tok, task, item, sysp, max_new_tokens, temperature, "paper", enable_thinking
-    )
+    """Single-agent baseline, optionally paired with shared Round 0.
+
+    With shared answers, the first agent response becomes the single-agent
+    prediction. This avoids another stochastic generation and keeps single,
+    majority, and debate paired on the exact same Round 0 population.
+    """
+    if initial_answers is None:
+        return _one(
+            model, tok, task, item, sysp, max_new_tokens, temperature,
+            "paper", enable_thinking,
+        )
+    if not initial_answers:
+        raise ValueError("initial_answers must contain at least one response")
+
+    question = task.question(item, style=initial_style)
+    messages = build_messages(question, system_prompt=sysp)
+    answer = initial_answers[0]
+    pred = task.parse(answer)
+    return {
+        "pred": pred,
+        "raw": [answer],
+        "preds": [pred],
+        "prompt": question,
+        "messages": messages,
+        "single_trace": {
+            "agent_index": 0,
+            "initial_answer": answer,
+            "initial_pred": pred,
+            "generation_calls": 0,
+            "round0_source": "shared",
+        },
+    }
 
 
 def run_reflection(

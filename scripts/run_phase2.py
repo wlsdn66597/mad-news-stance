@@ -21,13 +21,14 @@ from src.prompts.stance import PROFILES  # noqa: E402
 from src.tasks.stance import Stance  # noqa: E402
 
 METHOD_FNS = {
+    "single": methods.run_single,
     "vanilla": methods.run_vanilla,
     "cot": methods.run_cot,
     "majority": methods.run_majority,
     "debate": methods.run_debate,
     "debate_memory": methods.run_debate_memory,
 }
-SHARED_METHODS = {"majority", "debate", "debate_memory"}
+SHARED_METHODS = {"single", "majority", "debate", "debate_memory"}
 
 
 def parse_args():
@@ -63,6 +64,8 @@ def generation_seed(run_seed, task_name, namespace, item_id):
 def method_kwargs(method, cfg, args, temperature, initial_answers=None):
     kwargs = {"temperature": temperature}
     n_agents = args.n_agents or cfg["debate"]["n_agents"]
+    if method == "single" and initial_answers is not None:
+        kwargs["initial_answers"] = initial_answers
     if method == "majority":
         kwargs["k"] = args.k or cfg["majority"]["k"]
         if initial_answers is not None:
