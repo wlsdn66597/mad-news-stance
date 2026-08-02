@@ -1,16 +1,26 @@
 # ── Phase 1: 논문 재현 (GSM8K / MMLU) ─────────────────────────
-# 소량 서브셋에서 vanilla / cot / majority / debate 정확도를 비교한다.
-# 절대 수치보다 "debate > single/cot 경향" 재현이 목표.
+# 논문 비교군:
+# GSM8K = single / reflection / majority / debate
+# MMLU  = single / reflection / debate
+# 기존 vanilla / cot 이름은 과거 결과 호환을 위해 유지한다.
 
 models:
-  qwen:
+  qwen:                         # legacy alias for Qwen3-4B
     id: Qwen/Qwen3-4B
     system_prompt: null
     trust_remote_code: false
-  exaone:                       # EXAONE-4.0 = transformers 네이티브 지원(>=4.54), remote code 불필요
-    id: LGAI-EXAONE/EXAONE-4.0-1.2B    # 3.5는 최신 transformers 비호환 → 4.0으로 대체
+  qwen4:
+    id: Qwen/Qwen3-4B
     system_prompt: null
     trust_remote_code: false
+  qwen8:
+    id: Qwen/Qwen3-8B
+    system_prompt: null
+    trust_remote_code: false
+  exaone:                       # 3.5 remote-code mask compatibility: src/llm.py
+    id: LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct
+    system_prompt: null
+    trust_remote_code: true
 
 load_in_4bit: false             # 빈 4090이면 fp16
 mem_fraction: null              # 공유 GPU면 0.18 등으로 상한
@@ -18,11 +28,12 @@ gpu_index: 0
 
 seed: 0
 split: test
-n: 20                           # 처음엔 작게! 확인되면 50→100 으로
+sampling_protocol: paper
+n: 100                          # paper-scale subset
 max_new_tokens: 1024            # CoT가 '정답:' 전에 잘리던 문제로 512→1024 (E2→E3)
 
 sampling:
-  temperature: 0.7              # majority/debate 다양성용 (vanilla/cot 는 greedy)
+  temperature: 1.0              # 공개 코드의 ChatCompletion 기본 sampling 온도
 
 majority:
   k: 3                           # 논문 "Multi-Agent (Majority)": debate와 같은 agent 수(3)로 독립 생성+다수결
@@ -30,3 +41,8 @@ majority:
 debate:
   n_agents: 3
   n_rounds: 2
+
+# shared summarization-memory (agent 수 확장 실험)
+memory:
+  max_new_tokens: 256
+  temperature: 0.0

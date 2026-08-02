@@ -26,7 +26,14 @@ for f in sorted(glob.glob("results/phase1/*.json") + glob.glob("results/phase2/*
         if items:
             rows.append((model, task, method, variant, len(items), acc_of(items)))
 
-order = {"vanilla": 0, "cot": 1, "majority": 2, "debate": 3}
+order = {
+    "single": 0,
+    "reflection": 1,
+    "majority": 2,
+    "debate": 3,
+    "vanilla": 4,
+    "cot": 5,
+}
 rows.sort(key=lambda r: (r[0], r[1], order.get(r[2], 9), r[3]))
 
 print(f"{'model':8} {'task':6} {'method':9} {'variant':13} {'n':>4} {'acc':>7}")

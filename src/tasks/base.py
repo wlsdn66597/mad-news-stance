@@ -7,13 +7,19 @@
 class Task:
     name = "base"
     debate_template = None   # task 가 언어/포맷에 맞게 제공; None 이면 debate 엔진 기본값 사용
+    paper_debate_template = None
+    reflection_template = None
 
-    def load(self, split, n, seed=0):
+    def load(self, split, n, seed=0, sampling_protocol="uniform"):
         """[{'id', 'gold', ...}] 형태의 아이템 리스트를 반환."""
         raise NotImplementedError
 
     def question(self, item, style="cot"):
-        """모델에 줄 질문 문자열. style: 'vanilla'(직답) | 'cot'(단계별 추론)."""
+        """모델에 줄 질문 문자열.
+
+        style은 'vanilla'(직답), 'cot'(기존 단계별 추론),
+        'paper'(Du et al. 공개 코드의 최초 응답 프롬프트) 중 하나다.
+        """
         raise NotImplementedError
 
     def parse(self, text):
