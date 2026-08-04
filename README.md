@@ -190,3 +190,7 @@ python scripts/run_phase2.py --split test --n 200
 - **Phase 1:** 논문 재현 — GSM8K는 `single / reflection / majority / debate`, MMLU는 `single / reflection / debate` 비교.
 - **Phase 2:** K-News-Stance 적용 — 단일 LLM vs MAD (Accuracy / Macro-F1 / confusion matrix).
 - **Phase 3 (확장):** 역할기반 에이전트(Evidence/Stance/Critic/Judge) + memory agent.
+
+## Offline consensus and selective judge
+
+See [docs/selective_judge.md](docs/selective_judge.md) for reproducible offline aggregation and selective-judge experiments.
