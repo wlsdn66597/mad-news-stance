@@ -179,7 +179,7 @@ def main():
                     raise ValueError(
                         f"item {item_id} lacks {field}; pass --data-path for the original dataset"
                     )
-            set_seed(row["judge_seed"])
+            set_seed(int(row["judge_seed"]) % (2**32))
             result = run_judge(
                 model,
                 tokenizer,
