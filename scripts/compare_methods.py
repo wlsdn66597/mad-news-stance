@@ -3,12 +3,14 @@
     python scripts/compare_methods.py \
       results/phase2/<r2>.json:single \
       results/phase2/<r2>.json:majority \
-      results/phase2/<r2>.json:debate \
-      results/phase2/<r4>.json:debate=debate_r4
+      results/phase2/<r4>.json:debate=debate_r4 \
+      results/selective_judge/<run>.items.json:final_prediction=debate_r4+judge
 
-Each argument is `path:method` with an optional `=label`. Every pair is compared
-on the items they share, with exact McNemar over paired correctness. Reads only
-saved predictions; gold is used for evaluation only.
+Each argument is `path:field` with an optional `=label`. For a phase2 result the
+field is the method name; for a selective-judge `.items.json` it is a per-item
+prediction field (`final_prediction`, `judge_prediction`, `baseline_prediction`).
+Every pair is compared on the items they share, with exact McNemar over paired
+correctness. Reads only saved predictions; gold is used for evaluation only.
 """
 import argparse
 import itertools
@@ -26,19 +28,32 @@ def parse_args():
 
 def load(spec):
     body, _, label = spec.partition("=")
-    path, _, method = body.rpartition(":")
-    if not path or not method:
-        raise SystemExit(f"expected path:method[=label], got {spec!r}")
+    path, _, field = body.rpartition(":")
+    if not path or not field:
+        raise SystemExit(f"expected path:field[=label], got {spec!r}")
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if method not in data:
-        raise SystemExit(f"{path} has no '{method}' results")
-    items = data[method]
+    if isinstance(data, list):
+        # selective-judge .items.json: one row per item
+        missing = [row for row in data if field not in row]
+        if missing:
+            raise SystemExit(
+                f"{path} rows have no '{field}'; expected one of "
+                "final_prediction, judge_prediction, baseline_prediction"
+            )
+        pred = {str(row["item_id"]): row[field] for row in data}
+        gold = {str(row["item_id"]): row["gold"] for row in data}
+    else:
+        if field not in data:
+            raise SystemExit(f"{path} has no '{field}' results")
+        items = data[field]
+        pred = {key: value["pred"] for key, value in items.items()}
+        gold = {key: value["gold"] for key, value in items.items()}
     return {
-        "label": label or f"{method}@{Path(path).stem[-12:]}",
+        "label": label or f"{field}@{Path(path).stem[-12:]}",
         "path": path,
-        "method": method,
-        "pred": {key: value["pred"] for key, value in items.items()},
-        "gold": {key: value["gold"] for key, value in items.items()},
+        "method": field,
+        "pred": pred,
+        "gold": gold,
     }
 
 
