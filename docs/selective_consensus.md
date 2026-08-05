@@ -138,6 +138,18 @@ Each debate rerun is its own instability subset, so pair every
 that same run, and run the script once per pair. `JUDGE_ORDER_SEED=7002 bash …`
 overrides the judge seed when the cached run used a different one.
 
+`scripts/run_selective_consensus_queue.sh` holds that pairing for the existing
+`s6000 / s6001 / s6002` debate repeats and runs all three conditions for each,
+with the consensus seed set to that repeat's own debate run seed:
+
+```bash
+bash scripts/run_selective_consensus_queue.sh            # all repeats
+bash scripts/run_selective_consensus_queue.sh 6001 6002  # only these
+```
+
+It verifies every input file exists before starting, so a wrong path fails
+immediately instead of after hours of generation.
+
 ## Reusing an existing article-only judge run
 
 `--judge-result <run>.items.json` reuses judge predictions by item id instead of
