@@ -127,6 +127,34 @@ def main():
     ))
     report["unanimity"] = unanimity
 
+    # 유형 분석 1: round 0 -> last round, per item
+    transitions = Counter()
+    for row, before, after in zip(rows, majority[0], majority[-1]):
+        was, now = before == row["gold"], after == row["gold"]
+        transitions["오답 -> 정답" if (not was and now) else
+                    "정답 -> 오답" if (was and not now) else
+                    "정답 유지" if was else "오답 유지"] += 1
+    print(f"\n[type] round0 -> round{n_rounds - 1}")
+    for label in ("오답 -> 정답", "정답 -> 오답", "정답 유지", "오답 유지"):
+        print(f"  {label:12} {transitions[label]:5d}")
+    report["type_round0_to_final"] = dict(transitions)
+
+    # 유형 분석 2: how the agents split in the final round
+    def signature(values):
+        counts = Counter(value for value in values if value is not None)
+        if not counts:
+            return "파싱 실패"
+        pattern = ":".join(str(count) for count in sorted(counts.values(), reverse=True))
+        unparsed = sum(1 for value in values if value is None)
+        return f"{pattern} (+{unparsed} 파싱 실패)" if unparsed else pattern
+
+    splits = Counter(signature(row["rounds"][-1]) for row in rows)
+    print(f"\n[agreement] final round agent split")
+    for pattern, count in sorted(splits.items(), key=lambda kv: -kv[1]):
+        name = "만장일치" if pattern == str(n_agents) else pattern
+        print(f"  {name:22} {count:5d}")
+    report["final_round_split"] = dict(splits)
+
     final = majority[-1]
     wrong = [row for row, pred in zip(rows, final) if pred != row["gold"]]
     holds = [row for row in wrong if row["gold"] in row["rounds"][-1]]
