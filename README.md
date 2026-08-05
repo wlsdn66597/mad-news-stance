@@ -194,3 +194,9 @@ python scripts/run_phase2.py --split test --n 200
 ## Offline consensus and selective judge
 
 See [docs/selective_judge.md](docs/selective_judge.md) for reproducible offline aggregation and selective-judge experiments.
+
+## Selective consensus round
+
+불안정 문항에서 곧바로 Judge를 부르지 않고 기존 3개 agent가 한 번 더 독립 재검토한 뒤,
+만장일치일 때만 그 라벨을 채택하고 나머지만 기존 article-only Judge로 보내는 실험은
+[docs/selective_consensus.md](docs/selective_consensus.md) 참고.

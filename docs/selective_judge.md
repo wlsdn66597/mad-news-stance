@@ -64,5 +64,12 @@ STANCE_TRANSITION_FILE=stance_consensus_transition_cases.json \
   python -m unittest tests.test_consensus.TransitionExportIntegrationTest -v
 ```
 
+## Consensus round in front of this judge
+
+To let the original agents reconsider once before the judge is called, see
+[selective_consensus.md](selective_consensus.md). It reuses this judge, prompt,
+parser, retry and fallback unchanged, and can reuse a run's `.items.json` as a
+prediction cache.
+
 Reference: Selective Judge, ACL 2025: https://aclanthology.org/2025.acl-long.1210/
 Reference: Free-MAD, Findings ACL 2026: https://aclanthology.org/2026.findings-acl.1600/
