@@ -145,22 +145,24 @@ tail -f ~/gpu_wait_run.log
 
 ## Phase 1 실행 (논문 재현: GSM8K / MMLU)
 
-소량 서브셋에서 `vanilla / cot / majority / debate` 정확도를 비교합니다.
-목표는 절대 수치가 아니라 **debate > single/cot 경향** 재현.
+논문 표의 비교군을 task별로 재현합니다.
+
+- GSM8K: `single / reflection / majority / debate`
+- MMLU: `single / reflection / debate`
+- `single`은 공개 코드의 reasoning 프롬프트 1회, `reflection`은 같은
+  에이전트가 최초 답변을 받은 뒤 공식 self-check 프롬프트로 다시 답하는 2회 호출입니다.
+- 기존 `vanilla / cot`는 과거 실험 호환용이며 논문 표의 reflection을 뜻하지 않습니다.
 
 ```bash
-# 먼저 아주 작게 (하네스 동작 확인)
-python scripts/run_phase1.py --task gsm8k --n 5 --methods vanilla,debate
-
-# 전체 method, 서브셋 키우기
-python scripts/run_phase1.py --task gsm8k --n 50
-python scripts/run_phase1.py --task mmlu  --n 50
+# task별 논문 비교군을 자동 선택
+python scripts/run_phase1.py --task gsm8k --model qwen4 --n 5 --methods paper
+python scripts/run_phase1.py --task mmlu  --model qwen4 --n 5 --methods paper
 ```
 
 - 결과: `results/phase1/{task}_{model}_n{n}.json` 저장 + 콘솔에 method별 정확도 표. 재실행하면 **끝난 항목은 건너뜀(이어하기)**.
 - 파라미터는 `config/phase1.yaml` (n, max_new_tokens, debate n_agents/n_rounds, majority k, temperature).
-- 비용 감: 문항당 호출수 = vanilla·cot **1**, majority **k(=5)**, debate **n_agents×n_rounds(=6)**. 처음엔 `--n` 작게.
-- `--model exaone` 은 transformers 버전 이슈 정리 후 사용 (지금은 `qwen` 기본).
+- 문항당 호출수: single **1**, reflection **2**, majority **3**, debate **6**.
+- 프롬프트와 비교군 근거는 `docs/paper_methods.md`에 정리되어 있습니다.
 
 ## Phase 2 실행 (K-News-Stance)
 
@@ -185,6 +187,16 @@ python scripts/run_phase2.py --split test --n 200
 ## 로드맵
 
 - **Phase 0 (현재):** 스모크 테스트 — 파이프라인 점검.
-- **Phase 1:** 논문 재현 — MMLU / GSM8K 소량 서브셋에서 `single / CoT / majority / debate` 비교.
+- **Phase 1:** 논문 재현 — GSM8K는 `single / reflection / majority / debate`, MMLU는 `single / reflection / debate` 비교.
 - **Phase 2:** K-News-Stance 적용 — 단일 LLM vs MAD (Accuracy / Macro-F1 / confusion matrix).
 - **Phase 3 (확장):** 역할기반 에이전트(Evidence/Stance/Critic/Judge) + memory agent.
+
+## Offline consensus and selective judge
+
+See [docs/selective_judge.md](docs/selective_judge.md) for reproducible offline aggregation and selective-judge experiments.
+
+## Selective consensus round
+
+불안정 문항에서 곧바로 Judge를 부르지 않고 기존 3개 agent가 한 번 더 독립 재검토한 뒤,
+만장일치일 때만 그 라벨을 채택하고 나머지만 기존 article-only Judge로 보내는 실험은
+[docs/selective_consensus.md](docs/selective_consensus.md) 참고.
