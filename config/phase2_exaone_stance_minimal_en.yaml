@@ -3,11 +3,13 @@
 # temperature, agents, rounds, shared Round 0) so only the model differs.
 models:
   exaone:
-    # EXAONE 4.0 is natively supported by transformers >= 4.54; 3.5 needs
-    # remote code that breaks on current versions.
-    id: LGAI-EXAONE/EXAONE-4.0-1.2B
+    # Same model as config/phase1.yaml. 3.5 ships remote code whose causal-mask
+    # signature is adapted by src/llm.py; that is why trust_remote_code is on.
+    # Fallback if the remote code breaks on a newer transformers:
+    # LGAI-EXAONE/EXAONE-4.0-1.2B with trust_remote_code false.
+    id: LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct
     system_prompt: null
-    trust_remote_code: false
+    trust_remote_code: true
 
 data_path: data/k-news-stance_nosegment.json
 prompt_profile: stance_minimal_en
