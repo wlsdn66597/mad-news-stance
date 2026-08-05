@@ -148,12 +148,27 @@ def main():
         unparsed = sum(1 for value in values if value is None)
         return f"{pattern} (+{unparsed} 파싱 실패)" if unparsed else pattern
 
-    splits = Counter(signature(row["rounds"][-1]) for row in rows)
-    print(f"\n[agreement] final round agent split")
-    for pattern, count in sorted(splits.items(), key=lambda kv: -kv[1]):
-        name = "만장일치" if pattern == str(n_agents) else pattern
-        print(f"  {name:22} {count:5d}")
-    report["final_round_split"] = dict(splits)
+    # Is agreement actually a confidence signal? Accuracy per split pattern.
+    report["agreement"] = {}
+    for round_index, title in ((0, "round0"), (n_rounds - 1, f"round{n_rounds - 1} (final)")):
+        buckets = {}
+        for row, pred in zip(rows, majority[round_index]):
+            pattern = signature(row["rounds"][round_index])
+            bucket = buckets.setdefault(pattern, [0, 0])
+            bucket[0] += 1
+            bucket[1] += pred == row["gold"]
+        # A tie has no unique majority, so those rows score 0 here by construction;
+        # run_phase2's saved prediction breaks ties and may score higher.
+        print(f"\n[agreement] {title} agent split  (ties count as wrong: no unique majority)")
+        for pattern, (count, hits) in sorted(buckets.items(), key=lambda kv: -kv[1][0]):
+            name = "만장일치" if pattern == str(n_agents) else pattern
+            print(f"  {name:22} n={count:5d}  accuracy={hits / count:.4f}")
+        report["agreement"][title] = {
+            pattern: {"items": count, "accuracy": hits / count}
+            for pattern, (count, hits) in buckets.items()
+        }
+        if round_index == 0 and n_rounds == 1:
+            break
 
     final = majority[-1]
     wrong = [row for row, pred in zip(rows, final) if pred != row["gold"]]
