@@ -20,21 +20,41 @@ def round_requirements(
     max_new_tokens: int,
     n_agents: int = 3,
     template_tokens: int = 0,
+    round_index: int = 1,
 ) -> dict[str, int]:
-    """Tokens needed by the widest context of each debate round."""
+    """Tokens needed by one agent's context at ``round_index`` (0-based).
+
+    The context accumulates: at round r it holds the question, this agent's r
+    previous answers, and r debate prompts, each carrying the template and the
+    other agents' answers from that round. Every answer is bounded by
+    ``max_new_tokens``, so this is an upper bound and it grows linearly with the
+    round index.
+    """
     if n_agents < 1:
         raise ValueError("n_agents must be at least 1")
-    round0_input = question_tokens
-    # question + own previous answer + template + (n_agents - 1) peer answers
-    round1_input = (
-        question_tokens + max_new_tokens + template_tokens + (n_agents - 1) * max_new_tokens
-    )
+    if round_index < 0:
+        raise ValueError("round_index must be at least 0")
+    own_answers = round_index * max_new_tokens
+    debate_prompts = round_index * (template_tokens + (n_agents - 1) * max_new_tokens)
+    input_tokens = question_tokens + own_answers + debate_prompts
     return {
-        "round0_input": round0_input,
-        "round0_required": round0_input + max_new_tokens,
-        "round1_input": round1_input,
-        "round1_required": round1_input + max_new_tokens,
+        "round_index": round_index,
+        "input": input_tokens,
+        "required": input_tokens + max_new_tokens,
     }
+
+
+def peak_requirement(
+    question_tokens: int,
+    max_new_tokens: int,
+    n_agents: int = 3,
+    template_tokens: int = 0,
+    n_rounds: int = 2,
+) -> int:
+    """The last round is the widest, so it decides whether the run fits."""
+    return round_requirements(
+        question_tokens, max_new_tokens, n_agents, template_tokens, max(0, n_rounds - 1)
+    )["required"]
 
 
 def percentile(values: Sequence[int], fraction: float) -> int:
@@ -56,12 +76,15 @@ def project_budgets(
     """Per-item projection plus the items that would stop the run."""
     rows = []
     for item_id, tokens in question_tokens_by_id.items():
-        requirements = round_requirements(tokens, max_new_tokens, n_agents, template_tokens)
-        peak = (
-            requirements["round1_required"] if n_rounds > 1 else requirements["round0_required"]
+        rows.append(
+            {
+                "item_id": item_id,
+                "question_tokens": tokens,
+                "peak_required": peak_requirement(
+                    tokens, max_new_tokens, n_agents, template_tokens, n_rounds
+                ),
+            }
         )
-        rows.append({"item_id": item_id, "question_tokens": tokens, "peak_required": peak,
-                     **requirements})
     peaks = [row["peak_required"] for row in rows]
     questions = [row["question_tokens"] for row in rows]
     over = (
@@ -99,7 +122,9 @@ def project_budgets(
             key=lambda row: -row["peak_required"],
         ),
         "max_new_tokens_that_would_fit": (
-            max_new_tokens_that_fits(max(questions), context_window, n_agents, template_tokens)
+            max_new_tokens_that_fits(
+                max(questions), context_window, n_agents, template_tokens, n_rounds
+            )
             if context_window and questions
             else None
         ),
@@ -107,9 +132,14 @@ def project_budgets(
 
 
 def max_new_tokens_that_fits(
-    question_tokens: int, context_window: int, n_agents: int = 3, template_tokens: int = 0
+    question_tokens: int,
+    context_window: int,
+    n_agents: int = 3,
+    template_tokens: int = 0,
+    n_rounds: int = 2,
 ) -> int:
-    """Largest output budget whose round-1 peak still fits, 0 when hopeless."""
-    # round1_required = question + template + (n_agents + 1) * max_new_tokens
-    room = context_window - question_tokens - template_tokens
-    return max(0, room // (n_agents + 1))
+    """Largest output budget whose last-round peak still fits, 0 when hopeless."""
+    last = max(0, n_rounds - 1)
+    # required = question + last*template + max_new_tokens * (last*n_agents + 1)
+    room = context_window - question_tokens - last * template_tokens
+    return max(0, room // (last * n_agents + 1))
