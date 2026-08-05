@@ -1,0 +1,41 @@
+# Minimal English K-News-Stance debate experiment with EXAONE.
+# Same protocol as config/phase2_qwen8_stance_minimal_en.yaml (prompt profile,
+# temperature, agents, rounds, shared Round 0) so only the model differs.
+models:
+  exaone:
+    # EXAONE 4.0 is natively supported by transformers >= 4.54; 3.5 needs
+    # remote code that breaks on current versions.
+    id: LGAI-EXAONE/EXAONE-4.0-1.2B
+    system_prompt: null
+    trust_remote_code: false
+
+data_path: data/k-news-stance_nosegment.json
+prompt_profile: stance_minimal_en
+
+load_in_4bit: false
+mem_fraction: null
+gpu_index: 0
+
+seed: 0
+split: test
+n: 100
+# Output budget only. Long article inputs are kept intact and checked against
+# the model's context window before every generation.
+max_new_tokens: 1024
+
+sampling:
+  temperature: 1.0
+
+majority:
+  k: 3
+
+debate:
+  n_agents: 3
+  n_rounds: 2
+
+memory:
+  max_new_tokens: 256
+  temperature: 0.0
+
+# Majority and debate reuse the exact same three Round 0 responses.
+share_round0: true
