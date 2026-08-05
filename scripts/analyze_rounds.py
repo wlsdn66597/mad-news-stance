@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.consensus import unique_majority  # noqa: E402
+from src.consensus import judge_trigger, unique_majority  # noqa: E402
 from src.tasks.stance import Stance  # noqa: E402
 
 
@@ -172,6 +172,29 @@ def main():
         "wrong": len(wrong), "some_agent_holds_gold": len(holds),
         "gold_never_proposed": len(wrong) - len(ever),
         "correct": len(correct_rows), "correct_but_split": len(fragile),
+    }
+
+    # How much work a selective judge would have on this configuration.
+    triggered, reasons, holds_gold, trig_correct = 0, Counter(), 0, 0
+    for row in rows:
+        fired, why = judge_trigger([row["rounds"][0], row["rounds"][-1]], "instability")
+        if not fired:
+            continue
+        triggered += 1
+        reasons[why] += 1
+        if row["gold"] in row["rounds"][-1]:
+            holds_gold += 1
+        if unique_majority(row["rounds"][-1]).label == row["gold"]:
+            trig_correct += 1
+    print(f"\n[judge trigger] instability fires on {triggered}/{n} ({triggered/n:.1%})  "
+          f"{dict(reasons)}")
+    print(f"                accuracy there={trig_correct}/{triggered}"
+          f"={trig_correct/max(1, triggered):.4f}  "
+          f"some agent holds gold={holds_gold}/{triggered}")
+    report["judge_trigger"] = {
+        "triggered": triggered, "reasons": dict(reasons),
+        "accuracy_on_triggered": trig_correct / max(1, triggered),
+        "some_agent_holds_gold": holds_gold,
     }
 
     print("\n[distribution] gold  " + str(dict(Counter(gold))))
