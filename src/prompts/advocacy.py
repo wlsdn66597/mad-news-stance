@@ -48,6 +48,13 @@ You should discuss your reasoning in detail, thinking step-by-step.
 Discuss the strengths and weaknesses for each rationale, providing a final judgement for the stance value of the article towards the provided issue.
 Your final line should be exactly: Final stance: supportive, oppositional, or neutral"""
 
+TOC_JUDGE_USER_TEMPLATE = """News Article: {headline}
+{article}
+Issue: {issue}
+{analyses}"""
+
+TOC_JUDGE_ANALYSIS_TEMPLATE = "Stance: {stance} Rationale: {analysis}"
+
 TOC_JUDGE_REPAIR_TEMPLATE = """Your previous answer did not end with the required line.
 
 {invalid_output}
@@ -124,6 +131,9 @@ PROMPT_STYLES = {
         "advocate_user": TOC_ADVOCATE_USER_TEMPLATE,
         "rebuttal": TOC_REBUTTAL_TEMPLATE,
         "judge_system": TOC_JUDGE_SYSTEM_PROMPT,
+        "judge_input": "text",
+        "judge_user": TOC_JUDGE_USER_TEMPLATE,
+        "judge_analysis": TOC_JUDGE_ANALYSIS_TEMPLATE,
         "judge_output": "final_line",
         "judge_repair": TOC_JUDGE_REPAIR_TEMPLATE,
     },
@@ -132,6 +142,9 @@ PROMPT_STYLES = {
         "advocate_user": ADVOCATE_USER_TEMPLATE,
         "rebuttal": REBUTTAL_TEMPLATE,
         "judge_system": JUDGE_SYSTEM_PROMPT,
+        "judge_input": "json",
+        "judge_user": None,
+        "judge_analysis": None,
         "judge_output": "json",
         "judge_repair": None,
     },

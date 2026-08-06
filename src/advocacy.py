@@ -231,8 +231,30 @@ def judge_candidates(
 
 
 def judge_user_payload(
-    item: Mapping[str, Any], candidates: Sequence[Mapping[str, Any]]
-) -> dict[str, Any]:
+    item: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, Any]],
+    prompt_style: str = "toc",
+) -> str | dict[str, Any]:
+    """The judge input, in the format its prompt style asks for.
+
+    ToC presents the article and one rationale per stance value as plain text
+    and expects prose back, so a JSON output schema has no place in it. Our
+    variant keeps the JSON payload this repository's selective judge uses.
+    """
+    style = get_prompt_style(prompt_style)
+    if style["judge_input"] == "text":
+        analyses = "\n".join(
+            style["judge_analysis"].format(
+                stance=candidate["stance_argued"], analysis=candidate["analysis"]
+            )
+            for candidate in candidates
+        )
+        return style["judge_user"].format(
+            headline=item.get("headline", ""),
+            article=item.get("article", ""),
+            issue=item.get("issue", ""),
+            analyses=analyses,
+        )
     return {
         "issue": item.get("issue", ""),
         "headline": item.get("headline", ""),
@@ -267,8 +289,8 @@ def run_advocacy_judge(
     judge_system_prompt = style["judge_system"]
     output_format = style["judge_output"]
     candidates, candidate_order = judge_candidates(cases, item.get("id"), order_seed)
-    payload = judge_user_payload(item, candidates)
-    user_text = json.dumps(payload, ensure_ascii=False)
+    payload = judge_user_payload(item, candidates, prompt_style)
+    user_text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
     attempts: list[dict[str, Any]] = []
     prediction = None
     parsed = None

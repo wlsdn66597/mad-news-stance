@@ -64,7 +64,7 @@ it. A longer, more structured advocate prompt would therefore confound "assignin
 stances helps" with "a longer instruction helps", so both are available and the
 short one is the default.
 
-`--prompt-style toc` (default) keeps the published lengths and the published
+`--prompt-style toc` (default) keeps the published lengths, input format and
 output contract: a 33-word advocate, a 76-word judge that writes prose and names
 the label in its final line, and no extra output fields. ToC never asks for JSON,
 and requiring it broke every judge call on the first EXAONE-1.2B run: the model

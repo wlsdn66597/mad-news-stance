@@ -188,23 +188,40 @@ class LabelTrajectoryTest(unittest.TestCase):
 
 
 class JudgeInputTest(unittest.TestCase):
-    def test_payload_labels_each_analysis_with_the_stance_it_argues(self):
+    def test_structured_payload_labels_each_analysis_with_the_stance_it_argues(self):
         cases = [case(s) for s in STANCE_LABELS]
         candidates, order = judge_candidates(cases, "42", 3)
-        payload = judge_user_payload(ITEM, candidates)
+        payload = judge_user_payload(ITEM, candidates, "structured")
         self.assertEqual(
             sorted(a["stance_argued"] for a in payload["analyses"]), sorted(STANCE_LABELS)
         )
         self.assertEqual({a["candidate_id"] for a in payload["analyses"]}, {"A", "B", "C"})
         self.assertEqual(len(order), 3)
 
-    def test_payload_hides_gold_and_agent_identity(self):
+    def test_toc_payload_is_plain_text_without_a_json_schema(self):
+        """ToC's judge is given the article and one rationale per stance value as
+        text and answers in prose, so a JSON output schema does not belong."""
         cases = [case(s) for s in STANCE_LABELS]
         candidates, _ = judge_candidates(cases, "42", 3)
-        encoded = json.dumps(judge_user_payload({**ITEM}, candidates), ensure_ascii=False)
-        self.assertNotIn("gold", encoded)
-        self.assertNotIn("agent_index", encoded)
-        self.assertIn(ITEM["article"], encoded)
+        payload = judge_user_payload(ITEM, candidates, "toc")
+        self.assertIsInstance(payload, str)
+        self.assertNotIn("output_schema", payload)
+        self.assertNotIn("candidate_id", payload)
+        self.assertIn(ITEM["article"], payload)
+        for stance in STANCE_LABELS:
+            self.assertIn(f"Stance: {stance} Rationale:", payload)
+
+    def test_neither_payload_leaks_gold_or_agent_identity(self):
+        cases = [case(s) for s in STANCE_LABELS]
+        candidates, _ = judge_candidates(cases, "42", 3)
+        for style in ("toc", "structured"):
+            payload = judge_user_payload({**ITEM}, candidates, style)
+            encoded = payload if isinstance(payload, str) else json.dumps(
+                payload, ensure_ascii=False
+            )
+            self.assertNotIn("gold", encoded, style)
+            self.assertNotIn("agent_index", encoded, style)
+            self.assertIn(ITEM["article"], encoded, style)
 
     def test_candidate_order_is_seeded(self):
         cases = [case(s) for s in STANCE_LABELS]
