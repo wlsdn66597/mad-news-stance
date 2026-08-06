@@ -142,10 +142,13 @@ def run_advocacy(
     ]
     analyses_by_round: list[list[str]] = []
     peer_orders: list[dict[str, Any]] = []
+    cost_by_round: list[dict[str, Any]] = []
     input_tokens = output_tokens = calls = 0
     start = time.perf_counter()
 
     for round_index in range(rounds):
+        round_start = time.perf_counter()
+        round_in = round_out = 0
         round_analyses = []
         for agent_index, stance in enumerate(stances):
             if round_index > 0:
@@ -158,7 +161,7 @@ def run_advocacy(
                 peer_orders.append(
                     {"round": round_index, "agent_index": agent_index, "peer_order": order}
                 )
-            input_tokens += count_tokens(tokenizer, contexts[agent_index][-1]["content"]) or 0
+            round_in += count_tokens(tokenizer, contexts[agent_index][-1]["content"]) or 0
             agent_seed = stable_seed(
                 generation_seed, item_id, f"advocate_{round_index}_{agent_index}"
             )
@@ -177,8 +180,20 @@ def run_advocacy(
             contexts[agent_index].append({"role": "assistant", "content": reply})
             round_analyses.append(reply)
             calls += 1
-            output_tokens += count_tokens(tokenizer, reply) or 0
+            round_out += count_tokens(tokenizer, reply) or 0
         analyses_by_round.append(round_analyses)
+        input_tokens += round_in
+        output_tokens += round_out
+        cost_by_round.append(
+            {
+                "round": round_index,
+                "calls": len(round_analyses),
+                "latency_seconds": time.perf_counter() - round_start,
+                "input_tokens": round_in,
+                "output_tokens": round_out,
+                "output_chars": [len(text) for text in round_analyses],
+            }
+        )
 
     cases = [
         {
@@ -197,6 +212,7 @@ def run_advocacy(
         "analyses_by_round": analyses_by_round,
         "cases": cases,
         "peer_orders": peer_orders,
+        "cost_by_round": cost_by_round,
         "calls": calls,
         "latency_seconds": time.perf_counter() - start,
         "token_usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},

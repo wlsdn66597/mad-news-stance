@@ -107,16 +107,29 @@ results and `--baseline-result` reports exact McNemar against them.
 
 ## Outputs
 
-`<output-dir>/<prefix>.items.json`, `.summary.json`, `.config.json`, `.csv`.
+`<output-dir>/<prefix>.items.json`, `.summary.json`, `.config.json`, `.csv`,
+`.qualitative.md`.
+
+`.qualitative.md` groups items by (gold → predicted) and, for a few per cell,
+prints the headline, which stance each agent was told to argue, the judge's own
+reasoning, and the opening of the case that argued the gold label. That is
+enough to tell apart the two failure modes: the judge ignored a good argument,
+or no advocate ever made one. `--qualitative-per-cell` sets the sample size.
 
 Per item: `assigned_stances`, every advocate case with its `analysis`,
 declared `support` and `stated_label`, `peer_orders`, `candidate_order`, the
 judge's raw and parsed output, `pred`, `pred_source` (`judge` / `fallback`) and
 `correct`.
 
-The summary carries accuracy, macro-F1, per-class P/R/F1, confusion matrix,
-prediction-source counts, per-stage call/token/latency cost, the paired
-comparison against `--baseline-method`, and a compliance block.
+The summary carries accuracy, macro-F1, per-class P/R/F1 and the confusion
+matrix; a `runtime` block with UTC start/end, wall clock, and how many items were
+generated rather than resumed; per-stage and **per-round** call/latency/token
+cost; `judge_diagnostics` (which candidate position won, retry count); the paired
+comparison against `--baseline-method` with exact McNemar, a bootstrap CI and
+neutral/polar boundary switches; and a compliance block.
+
+Progress lines carry a running seconds-per-item and an ETA, so a long run can be
+watched with `tail -f`.
 
 ## What to check first
 
