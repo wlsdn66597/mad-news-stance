@@ -1,8 +1,12 @@
 # Stance-advocacy debate with a contrastive judge
 
 One agent is assigned each label in advance and builds the strongest
-article-grounded case for it. A judge then reads the article plus the three
-anonymized, shuffled cases and decides.
+article-grounded case for it. The agents exchange cases for one or more rebuttal
+rounds, and a judge then reads the article plus the three anonymized, shuffled
+final cases and decides.
+
+The base configuration is **two rounds** — independent cases, then one rebuttal
+round — matching PREDICT's fixed two-round debate. `--rounds` raises the limit.
 
 ## Why this shape
 
@@ -12,9 +16,9 @@ still wrong after four rounds, **441 (88%) never had the gold label proposed by
 any agent in any round**. No aggregation rule can repair those. Assigning one
 agent per label puts the gold label among the candidates for every item.
 
-It is also cheaper than debate: `n_labels + 1 = 4` generations per item
-(`+ n_labels` with `--rebuttal`), against 6 for a two-round debate and 12 for
-four rounds.
+Cost is `n_labels * rounds + 1` generations per item: 4 at one round, **7 at the
+two-round base**, 13 at four rounds. A two-round debate costs 6 and a four-round
+debate 12.
 
 ## Sources
 
@@ -29,6 +33,27 @@ four rounds.
 - **M-MAD** (Feng et al., ACL 2025) motivates decoupling the decision into
   separate agents before synthesis; its ablation attributes most of the gain to
   that decoupling rather than to the debate itself.
+
+## No self-reported confidence
+
+An earlier draft asked each advocate to rate how strongly the article supported
+its assigned stance (`weak|moderate|strong`) and used that to break ties when
+the judge failed. It was dropped. None of the source papers ask for it, verbal
+confidence from a 1.2B model is not a trustworthy signal, and it accounted for
+much of the prompt-length inflation. The judge always decides, so no tie-break
+was needed in the first place.
+
+## Consensus is never checked
+
+The three agents disagree by construction, so there is no "consensus failed"
+state and no consensus rule. ToC, PREDICT and MAD all work the same way: the
+judge always produces the answer. Only M-MAD has a non-consensus rule, and that
+is to end its two-agent per-dimension debates early.
+
+The fallback in this pipeline is therefore not a consensus rule. It covers one
+thing: a judge whose output carried no stance label in any attempt. That is a
+broken generation, so the label is chosen deterministically from the item id and
+the count is reported. A run with a non-trivial fallback count is invalid.
 
 ## Prompt style is an ablation, not a choice
 
@@ -49,10 +74,8 @@ methods use.
 
 `--prompt-style structured` is the variant with two deliberate departures from ToC:
 
-1. Each advocate must also report the strongest counter-evidence and how well
-   the article supports its assigned stance (`weak|moderate|strong`). Every
-   advocate is fluent by construction, so the judge needs a signal other than
-   persuasiveness, and the declared support doubles as a routing signal.
+1. Each advocate is asked for named evidence fields, including the strongest
+   counter-evidence against its own assigned stance.
 2. The judge is told explicitly that the analyses are assigned advocacy rather
    than independent opinions, returns the strict JSON schema this repository's
    selective judge already uses, and candidate order is shuffled per item with a
@@ -74,9 +97,8 @@ python scripts/run_advocacy_judge.py \
 ```
 
 `--prompt-style structured` runs the variant; the two differ only in prompt
-wording, so the pair isolates the instruction from the architecture.
-`--rebuttal` adds the PREDICT-style second round. `--limit N` runs the first N
-items. Runs are item-resumable: re-running the same command reuses
+wording, so the pair isolates the instruction from the architecture. `--rounds N`
+sets the debate length (2 is the base). `--limit N` runs the first N items. Runs are item-resumable: re-running the same command reuses
 `<prefix>.items.json` and only processes what is missing.
 
 The item order comes from `Stance.load(split, n, seed=data_seed)`, so with the
@@ -98,9 +120,9 @@ comparison against `--baseline-method`, and a compliance block.
 
 ## What to check first
 
-- **Prompt style.** With `--prompt-style toc` the advocates are not asked for a
-  support level, so `declared_support` is empty and a judge failure falls back
-  deterministically instead of by declared support.
+- **Fallback count.** `pred_source` should be `judge` for essentially every
+  item. A high `fallback_used` means the judge is not producing labels, not that
+  the debate was inconclusive.
 - **Compliance.** `compliance.stated_label_mismatch` counts advocate answers
   whose own stated label contradicts the stance they were told to argue. If a
   small model refuses the assigned side often, the design's premise is broken.
@@ -109,16 +131,17 @@ comparison against `--baseline-method`, and a compliance block.
   `declared_support` distribution for `neutral`.
 - **Position bias.** Re-run with a different `--order-seed`; the judge should
   not track candidate position.
-- **Fallbacks.** When the judge returns nothing there is no majority to fall
-  back on, so the label whose advocate declared the strongest support wins
-  (`fallback_reason`). A high fallback count invalidates the comparison.
+- **Drift across rounds.** `label_trajectory` records, per round, whether each
+  agent's text still reads as its assigned label. It never affects the decision,
+  but it shows whether advocates concede as the round limit rises.
 
 ## Baselines to report alongside
 
 The comparison that matters is against `majority`, not against debate: it is
 the strongest baseline measured in this repository. Match the generation budget
 too — advocacy uses 4 calls per item, so `majority --n-agents 4 --k 4` is the
-compute-matched control.
+compute-matched control at one round; at the two-round base the match is
+`majority --n-agents 7 --k 7`.
 
 The other informative control already exists: a judge fed *free-form* agent
 analyses (`run_selective_judge.py --judge-input-mode debate_trace`) scored below

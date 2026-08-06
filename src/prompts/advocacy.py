@@ -1,33 +1,30 @@
 """Prompts for stance-advocacy debate.
 
 Each agent is assigned one of the three labels in advance and builds the
-strongest article-grounded case for it; a judge then contrasts the three cases.
+strongest article-grounded case for it. The agents then exchange cases for one
+or more rebuttal rounds, and a judge contrasts the final cases and decides.
 
-The design follows Tree-of-Counterfactual prompting (Weinzierl & Harabagiu,
-ACL 2024), which generates one rationale per stance value and picks a winner
-with contrastive verification. Two departures are deliberate:
+Backbone: Tree-of-Counterfactual prompting (Weinzierl & Harabagiu, ACL 2024),
+which generates one rationale per stance value and picks a winner with
+contrastive verification. Round structure: PREDICT (Park et al., EMNLP 2024),
+which runs a fixed two-round debate and then hands the history to a judge.
 
-1. Each advocate must also report the strongest counter-evidence and how well
-   the article supports its assigned stance. Every advocate is fluent by
-   construction, so the judge needs a signal other than persuasiveness.
-2. The judge is told explicitly that the analyses are assigned advocacy rather
-   than independent opinions, and the candidate order is shuffled per item
-   (ToC does neither).
+The published prompts are short — ToC's advocate system prompt is 34 words and
+its judge 82, PREDICT's debater 32, MAD's 16 — and this repository's own stance
+profile is 32. `toc` keeps that scale so a gain cannot be attributed to a longer
+instruction; `structured` is the variant that spells out the evidence fields and
+tells the judge the analyses are assigned advocacy.
 
-The rebuttal round mirrors PREDICT's second debate round (Park et al., EMNLP
-2024), where each side may refute or concede after seeing the opposing case.
+Neither style asks an advocate to rate its own confidence. Self-reported
+confidence is not used by any of the source papers and was not carrying its
+weight in prompt length here.
 """
 
 STANCE_LABELS = ("supportive", "oppositional", "neutral")
 
-SUPPORT_LEVELS = ("weak", "moderate", "strong")
+LABEL_LINE = "Final stance: <supportive|oppositional|neutral>"
 
 # ---------------------------------------------------------------- toc style
-# Close to the published Chain-of-Explanation / Contrastive-Verification
-# wording, only re-targeted from social media posts to news articles. Kept at
-# the same length as the paper's (34 and 82 words) and as this repository's
-# stance_minimal_en profile (32 words), so a gain cannot be attributed to a
-# longer, more structured instruction.
 
 TOC_ADVOCATE_SYSTEM_PROMPT = """You are an expert linguistic assistant.
 You will be tasked with explaining why a news article may have a stance towards a provided issue.
@@ -37,6 +34,12 @@ TOC_ADVOCATE_USER_TEMPLATE = """News Article: {headline}
 {article}
 Issue: {issue}
 Stance: {stance}"""
+
+TOC_REBUTTAL_TEMPLATE = """The other analysts argued as follows:
+
+{others}
+
+Based on your own analysis, agree with or rebut their arguments and explain your reason."""
 
 TOC_JUDGE_SYSTEM_PROMPT = """You are an expert linguistic assistant.
 You will be tasked with judging which stance value a news article has towards a provided issue.
@@ -50,19 +53,9 @@ TOC_JUDGE_REPAIR_TEMPLATE = """Your previous answer did not end with the require
 {invalid_output}
 
 Answer again and end with exactly this line:
-Final stance: <supportive|oppositional|neutral>"""
-
-TOC_REBUTTAL_TEMPLATE = """The other analysts argued as follows:
-
-{others}
-
-Based on your own analysis, agree with or rebut their arguments and explain your reason."""
+""" + LABEL_LINE
 
 # ------------------------------------------------------------- our variant
-# Adds counter-evidence and a self-reported support level, and tells the judge
-# the analyses are assigned advocacy. Every advocate is fluent by construction,
-# so the judge needs a signal other than persuasiveness. Whether that pays for
-# the extra instruction length is exactly what --prompt-style ablates.
 
 ADVOCATE_SYSTEM_PROMPT = """You are an expert analyst of Korean news articles.
 
@@ -85,8 +78,7 @@ Assigned stance: {stance}
 Respond with these fields:
 Article evidence (at most three short quoted passages):
 Why this supports the assigned stance:
-Strongest counter-evidence against the assigned stance:
-Support for the assigned stance: <weak|moderate|strong>"""
+Strongest counter-evidence against the assigned stance:"""
 
 REBUTTAL_TEMPLATE = """The other analysts argued as follows:
 
@@ -94,11 +86,7 @@ REBUTTAL_TEMPLATE = """The other analysts argued as follows:
 
 Based on your own analysis, agree with or rebut their arguments in one
 paragraph. If their article-grounded evidence is stronger than yours, say so
-explicitly. Then restate the final line in exactly this format:
-
-Support for the assigned stance: <weak|moderate|strong>"""
-
-PEER_TEMPLATE = "Analyst {index} (arguing for {stance}):\n{answer}"
+explicitly."""
 
 JUDGE_SYSTEM_PROMPT = """You are an independent adjudicator for news stance classification.
 
@@ -127,25 +115,25 @@ JUDGE_SCHEMA = {
     "rationale": "brief rationale without hidden chain-of-thought",
 }
 
+PEER_TEMPLATE = "Analyst {index} (arguing for {stance}):\n{answer}"
+
 
 PROMPT_STYLES = {
     "toc": {
         "advocate_system": TOC_ADVOCATE_SYSTEM_PROMPT,
         "advocate_user": TOC_ADVOCATE_USER_TEMPLATE,
-        "judge_system": TOC_JUDGE_SYSTEM_PROMPT,
         "rebuttal": TOC_REBUTTAL_TEMPLATE,
+        "judge_system": TOC_JUDGE_SYSTEM_PROMPT,
         "judge_output": "final_line",
         "judge_repair": TOC_JUDGE_REPAIR_TEMPLATE,
-        "declares_support": False,
     },
     "structured": {
         "advocate_system": ADVOCATE_SYSTEM_PROMPT,
         "advocate_user": ADVOCATE_USER_TEMPLATE,
-        "judge_system": JUDGE_SYSTEM_PROMPT,
         "rebuttal": REBUTTAL_TEMPLATE,
+        "judge_system": JUDGE_SYSTEM_PROMPT,
         "judge_output": "json",
         "judge_repair": None,
-        "declares_support": True,
     },
 }
 

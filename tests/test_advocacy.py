@@ -6,12 +6,12 @@ from src.advocacy import (
     assigned_stances,
     compliance,
     judge_candidates,
+    judge_failure_fallback,
     judge_user_payload,
-    parse_support_level,
     peer_order,
+    round_label_trajectory,
     run_advocacy,
     run_advocacy_judge,
-    support_fallback,
 )
 from src.prompts.advocacy import PROMPT_STYLES, STANCE_LABELS, advocate_question
 
@@ -32,12 +32,24 @@ ITEM = {
 }
 
 
-def case(stance, support="moderate", analysis=None):
+class RecordingChat:
+    """chat() receives the agent's live context list and we append to it right
+    after, so assertions need a snapshot taken at call time."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.calls = []
+
+    def __call__(self, model, tokenizer, messages, **kwargs):
+        self.calls.append([dict(message) for message in messages])
+        return self.replies.pop(0)
+
+
+def case(stance, analysis=None):
     return {
         "agent_index": STANCE_LABELS.index(stance),
         "stance": stance,
-        "analysis": analysis or f"evidence for {stance}\nSupport for the assigned stance: {support}",
-        "support": support,
+        "analysis": analysis or f"evidence for {stance}",
         "stated_label": None,
     }
 
@@ -63,11 +75,13 @@ class AdvocatePromptTest(unittest.TestCase):
             len(structured["advocate_system"].split()), len(toc["advocate_system"].split())
         )
 
-    def test_only_the_structured_style_asks_for_a_support_level(self):
-        self.assertFalse(PROMPT_STYLES["toc"]["declares_support"])
-        self.assertTrue(PROMPT_STYLES["structured"]["declares_support"])
-        self.assertNotIn("weak", PROMPT_STYLES["toc"]["advocate_user"])
-        self.assertIn("weak", PROMPT_STYLES["structured"]["advocate_user"])
+    def test_no_style_asks_an_advocate_to_rate_its_own_confidence(self):
+        for style in PROMPT_STYLES.values():
+            for key in ("advocate_system", "advocate_user", "rebuttal"):
+                text = style[key].lower()
+                self.assertNotIn("support for the assigned stance", text)
+                self.assertNotIn("confidence", text)
+                self.assertNotIn("weak|moderate|strong", text)
 
     def test_unknown_style_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -87,58 +101,85 @@ class AdvocatePromptTest(unittest.TestCase):
         self.assertGreater(len(orders), 1)
 
 
-class SupportLevelTest(unittest.TestCase):
-    def test_parses_the_last_declared_level(self):
-        text = "Support for the assigned stance: weak\n...\nSupport for the assigned stance: strong"
-        self.assertEqual(parse_support_level(text), "strong")
-
-    def test_tolerates_angle_brackets_and_case(self):
-        self.assertEqual(
-            parse_support_level("SUPPORT FOR THE ASSIGNED STANCE: <Moderate>"), "moderate"
-        )
-
-    def test_missing_level_is_none(self):
-        self.assertIsNone(parse_support_level("no such field here"))
-
-
 class AdvocacyRoundTest(unittest.TestCase):
-    def test_one_call_per_label_with_isolated_contexts(self):
-        outputs = [f"case {i}\nSupport for the assigned stance: moderate" for i in range(3)]
-        with patch("src.advocacy.chat", side_effect=outputs) as chat:
-            result = run_advocacy(object(), FakeTokenizer(), ITEM, order_seed=5)
+    def test_single_round_is_one_call_per_label_with_isolated_contexts(self):
+        chat = RecordingChat([f"case {i}" for i in range(3)])
+        with patch("src.advocacy.chat", chat):
+            result = run_advocacy(object(), FakeTokenizer(), ITEM, rounds=1, order_seed=5)
         self.assertEqual(result["calls"], 3)
-        self.assertEqual(
-            sorted(c["stance"] for c in result["cases"]), sorted(STANCE_LABELS)
-        )
+        self.assertEqual(sorted(c["stance"] for c in result["cases"]), sorted(STANCE_LABELS))
         # each advocate starts from a fresh two-message context: no peer leakage
-        for call in chat.call_args_list:
-            messages = call.args[2]
+        for messages in chat.calls:
             self.assertEqual(len(messages), 2)
             self.assertEqual(messages[0]["role"], "system")
+            self.assertNotIn("case ", messages[1]["content"])
 
-    def test_rebuttal_round_shows_peers_but_not_self(self):
-        outputs = [f"case {i}\nSupport for the assigned stance: weak" for i in range(3)]
-        rebuttals = [f"rebuttal {i}\nSupport for the assigned stance: strong" for i in range(3)]
-        with patch("src.advocacy.chat", side_effect=outputs + rebuttals) as chat:
-            result = run_advocacy(
-                object(), FakeTokenizer(), ITEM, order_seed=5, rebuttal=True,
-                prompt_style="structured",
-            )
+    def test_base_configuration_is_two_rounds(self):
+        outputs = [f"round0 {i}" for i in range(3)] + [f"round1 {i}" for i in range(3)]
+        with patch("src.advocacy.chat", side_effect=outputs):
+            result = run_advocacy(object(), FakeTokenizer(), ITEM, order_seed=5)
+        self.assertEqual(result["rounds"], 2)
         self.assertEqual(result["calls"], 6)
-        self.assertEqual([c["support"] for c in result["cases"]], ["strong"] * 3)
-        self.assertEqual([c["initial_support"] for c in result["cases"]], ["weak"] * 3)
-        first_rebuttal = chat.call_args_list[3].args[2][-1]["content"]
+        self.assertEqual(len(result["analyses_by_round"]), 2)
+        # the judge sees the last round
+        self.assertEqual([c["analysis"] for c in result["cases"]], result["analyses_by_round"][1])
+
+    def test_round_count_scales_the_calls_and_history(self):
+        outputs = [f"r{r} a{a}" for r in range(4) for a in range(3)]
+        with patch("src.advocacy.chat", side_effect=outputs):
+            result = run_advocacy(object(), FakeTokenizer(), ITEM, rounds=4, order_seed=5)
+        self.assertEqual(result["calls"], 12)
+        self.assertEqual(len(result["analyses_by_round"]), 4)
+        self.assertEqual(len(result["peer_orders"]), 3 * 3)  # no peers in round 0
+
+    def test_rounds_must_be_at_least_one(self):
+        with self.assertRaises(ValueError):
+            run_advocacy(object(), FakeTokenizer(), ITEM, rounds=0)
+
+    def test_later_rounds_show_peers_but_not_self(self):
+        chat = RecordingChat([f"case {i}" for i in range(3)]
+                             + [f"rebuttal {i}" for i in range(3)])
+        with patch("src.advocacy.chat", chat):
+            run_advocacy(object(), FakeTokenizer(), ITEM, rounds=2, order_seed=5)
+        first_rebuttal = chat.calls[3][-1]["content"]
         self.assertIn("case 1", first_rebuttal)
         self.assertIn("case 2", first_rebuttal)
         self.assertNotIn("case 0", first_rebuttal)
 
+    def test_each_agent_keeps_its_own_growing_context(self):
+        chat = RecordingChat([f"case {i}" for i in range(3)]
+                             + [f"rebuttal {i}" for i in range(3)])
+        with patch("src.advocacy.chat", chat):
+            run_advocacy(object(), FakeTokenizer(), ITEM, rounds=2, order_seed=5)
+        second_round = chat.calls[3]
+        self.assertEqual(len(second_round), 4)  # system, question, own answer, rebuttal
+        self.assertEqual(second_round[2]["content"], "case 0")
+        self.assertEqual(second_round[2]["role"], "assistant")
+
     def test_peer_order_is_seeded_and_excludes_self(self):
-        cases = [case(s) for s in STANCE_LABELS]
-        first, order = peer_order(cases, 1, "42", 11)
-        second, order2 = peer_order(cases, 1, "42", 11)
+        analyses = ["a0", "a1", "a2"]
+        stances = list(STANCE_LABELS)
+        first, order = peer_order(analyses, stances, 1, "42", 11, 1)
+        second, order2 = peer_order(analyses, stances, 1, "42", 11, 1)
         self.assertEqual(first, second)
         self.assertEqual(order, order2)
+        self.assertNotIn("a1", [text for _, text in first])
         self.assertEqual({row["source_agent_index"] for row in order}, {0, 2})
+
+
+class LabelTrajectoryTest(unittest.TestCase):
+    def test_reports_whether_each_agent_held_its_assigned_side(self):
+        stances = ["supportive", "oppositional", "neutral"]
+        analyses_by_round = [
+            ["Final stance: supportive", "Final stance: oppositional", "no label"],
+            ["Final stance: supportive", "Final stance: neutral", "no label"],
+        ]
+        trajectory = round_label_trajectory(analyses_by_round, stances)
+        self.assertEqual(len(trajectory), 2)
+        self.assertEqual(trajectory[0]["held_assigned"], [True, True, True])
+        # the oppositional advocate conceded to neutral in round 1
+        self.assertEqual(trajectory[1]["held_assigned"], [True, False, True])
+        self.assertEqual(trajectory[1]["stated_labels"][1], "neutral")
 
 
 class JudgeInputTest(unittest.TestCase):
@@ -166,42 +207,9 @@ class JudgeInputTest(unittest.TestCase):
             judge_candidates(cases, "42", 3)[1], judge_candidates(cases, "42", 3)[1]
         )
 
-    def test_judge_returns_the_parsed_label(self):
-        output = ('{"label":"oppositional","evidence_sufficient":true,'
-                  '"evidence":["framing"],"rationale":"brief"}')
-        with patch("src.advocacy.chat", return_value=output):
-            result = run_advocacy_judge(
-                object(), FakeTokenizer(), ITEM, [case(s) for s in STANCE_LABELS]
-            )
-        self.assertEqual(result["prediction"], "oppositional")
-        self.assertEqual(result["retry_count"], 0)
-
-    def test_one_repair_retry_then_success(self):
-        outputs = [
-            "not json",
-            '{"label":"neutral","evidence_sufficient":true,'
-            '"evidence":["x"],"rationale":"y"}',
-        ]
-        with patch("src.advocacy.chat", side_effect=outputs):
-            result = run_advocacy_judge(
-                object(), FakeTokenizer(), ITEM, [case(s) for s in STANCE_LABELS]
-            )
-        self.assertEqual(result["prediction"], "neutral")
-        self.assertEqual(result["retry_count"], 1)
-
-    def test_judge_failure_yields_no_prediction(self):
-        with patch("src.advocacy.chat", side_effect=["bad", "still bad"]):
-            result = run_advocacy_judge(
-                object(), FakeTokenizer(), ITEM, [case(s) for s in STANCE_LABELS]
-            )
-        self.assertIsNone(result["prediction"])
-        self.assertEqual(len(result["attempts"]), 2)
-
 
 class JudgeOutputFormatTest(unittest.TestCase):
     """ToC's judge writes prose and names the label last; ours returns JSON."""
-
-    CASES = None
 
     def setUp(self):
         self.cases = [case(s) for s in STANCE_LABELS]
@@ -216,16 +224,6 @@ class JudgeOutputFormatTest(unittest.TestCase):
         self.assertEqual(result["prediction"], "oppositional")
         self.assertEqual(result["output_format"], "final_line")
         self.assertEqual(result["retry_count"], 0)
-
-    def test_toc_judge_does_not_require_json(self):
-        """The failure that broke the first run: valid prose was rejected."""
-        prose = ("After weighing all three, the article reports without taking a side.\n"
-                 "Final stance: neutral")
-        with patch("src.advocacy.chat", return_value=prose):
-            result = run_advocacy_judge(
-                object(), FakeTokenizer(), ITEM, self.cases, prompt_style="toc"
-            )
-        self.assertIsNotNone(result["prediction"])
         self.assertIsNone(result["attempts"][0]["parse_error"])
 
     def test_toc_judge_retries_when_no_label_is_stated(self):
@@ -239,6 +237,17 @@ class JudgeOutputFormatTest(unittest.TestCase):
         self.assertEqual(result["retry_count"], 1)
         repair = chat.call_args_list[1].args[2][-1]["content"]
         self.assertIn("end with exactly this line", repair)
+
+    def test_structured_judge_parses_the_json_schema(self):
+        output = ('{"label":"oppositional","evidence_sufficient":true,'
+                  '"evidence":["framing"],"rationale":"brief"}')
+        with patch("src.advocacy.chat", return_value=output):
+            result = run_advocacy_judge(
+                object(), FakeTokenizer(), ITEM, self.cases, prompt_style="structured"
+            )
+        self.assertEqual(result["prediction"], "oppositional")
+        self.assertEqual(result["output_format"], "json")
+        self.assertFalse(result["label_recovered_from_text"])
 
     def test_structured_judge_recovers_a_label_from_broken_json(self):
         truncated = '{"label":"supportive","evidence_sufficient":true,"evidence":["fram'
@@ -257,29 +266,14 @@ class JudgeOutputFormatTest(unittest.TestCase):
             )
         self.assertIsNone(result["prediction"])
 
-
-class PromptStyleRuntimeTest(unittest.TestCase):
-    def test_toc_style_sends_the_short_system_prompt_and_parses_no_support(self):
-        outputs = ["a rationale for the assigned stance"] * 3
-        with patch("src.advocacy.chat", side_effect=outputs) as chat:
-            result = run_advocacy(
-                object(), FakeTokenizer(), ITEM, order_seed=5, prompt_style="toc"
-            )
-        system = chat.call_args_list[0].args[2][0]["content"]
-        self.assertIn("expert linguistic assistant", system)
-        self.assertTrue(all(c["support"] is None for c in result["cases"]))
-        self.assertEqual(result["prompt_style"], "toc")
-
     def test_judge_system_prompt_follows_the_style(self):
-        output = ('{"label":"neutral","evidence_sufficient":true,'
-                  '"evidence":["x"],"rationale":"y"}')
+        output = "Final stance: neutral"
         seen = {}
         for style, marker in (("toc", "expert linguistic assistant"),
                               ("structured", "advocacy arguments, not evidence")):
             with patch("src.advocacy.chat", return_value=output) as chat:
                 run_advocacy_judge(
-                    object(), FakeTokenizer(), ITEM,
-                    [case(s) for s in STANCE_LABELS], prompt_style=style,
+                    object(), FakeTokenizer(), ITEM, self.cases, prompt_style=style,
                 )
             seen[style] = chat.call_args_list[0].args[2][0]["content"]
             self.assertIn(marker, seen[style])
@@ -287,26 +281,18 @@ class PromptStyleRuntimeTest(unittest.TestCase):
 
 
 class FallbackTest(unittest.TestCase):
-    def test_strongest_declared_support_wins(self):
-        cases = [case("supportive", "weak"), case("oppositional", "strong"),
-                 case("neutral", "moderate")]
-        label, reason = support_fallback(cases, "42")
-        self.assertEqual(label, "oppositional")
-        self.assertEqual(reason, "strongest_declared_support")
+    """Not a consensus rule: the advocates disagree by design and the judge
+    always decides. This only covers a judge that produced no label at all."""
 
-    def test_tie_is_deterministic(self):
-        cases = [case("supportive", "strong"), case("oppositional", "strong"),
-                 case("neutral", "weak")]
-        first = support_fallback(cases, "42")
-        self.assertEqual(first, support_fallback(cases, "42"))
-        self.assertIn(first[0], {"supportive", "oppositional"})
-        self.assertEqual(first[1], "tied_declared_support_deterministic_fallback")
+    def test_returns_a_label_deterministically(self):
+        first = judge_failure_fallback("42", 7)
+        self.assertEqual(first, judge_failure_fallback("42", 7))
+        self.assertIn(first[0], STANCE_LABELS)
+        self.assertEqual(first[1], "judge_no_label_deterministic")
 
-    def test_no_declared_support_still_returns_a_label(self):
-        cases = [dict(case(s), support=None) for s in STANCE_LABELS]
-        label, reason = support_fallback(cases, "42")
-        self.assertIn(label, STANCE_LABELS)
-        self.assertEqual(reason, "no_declared_support_deterministic_fallback")
+    def test_different_items_do_not_all_get_the_same_label(self):
+        labels = {judge_failure_fallback(str(i), 7)[0] for i in range(40)}
+        self.assertGreater(len(labels), 1)
 
 
 class ComplianceTest(unittest.TestCase):

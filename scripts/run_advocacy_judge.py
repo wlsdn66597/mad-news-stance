@@ -2,8 +2,8 @@
 
 One agent argues for each of the three labels, so the gold label is always among
 the candidates; the judge reads the article plus the three anonymized, shuffled
-cases and decides. Costs n_labels (+ n_labels with --rebuttal) + 1 generations
-per item, which is fewer than a two-round debate.
+cases and decides. Costs n_labels * rounds + 1 generations per item: 7 in the
+base two-round configuration, against 6 for a two-round debate and 12 for four.
 
     python scripts/run_advocacy_judge.py \
       --config config/phase2_exaone_stance_minimal_en.yaml --model exaone \
@@ -26,9 +26,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.advocacy import (  # noqa: E402
     compliance,
+    judge_failure_fallback,
+    round_label_trajectory,
     run_advocacy,
     run_advocacy_judge,
-    support_fallback,
 )
 from src.consensus import (  # noqa: E402
     classification_metrics,
@@ -55,12 +56,16 @@ def parse_args():
     parser.add_argument("--run-seed", type=int, default=None)
     parser.add_argument("--advocate-temperature", type=float, default=None)
     parser.add_argument("--advocate-max-new-tokens", type=int, default=None)
-    parser.add_argument("--rebuttal", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--rounds", type=int, default=2,
+        help="advocacy rounds: 1 is the independent cases only, 2 adds one "
+             "rebuttal round (the base configuration), higher raises the limit.",
+    )
     parser.add_argument(
         "--prompt-style", choices=sorted(PROMPT_STYLES), default="toc",
-        help="'toc' keeps the published prompt lengths; 'structured' adds "
-             "counter-evidence, a self-reported support level and an "
-             "advocacy-aware judge.",
+        help="'toc' keeps the published prompt lengths and prose output; "
+             "'structured' spells out the evidence fields and uses an "
+             "advocacy-aware judge with the strict JSON schema.",
     )
     parser.add_argument("--order-seed", type=int, default=8001)
     parser.add_argument("--judge-enabled", action=argparse.BooleanOptionalAction, default=True)
@@ -112,7 +117,7 @@ def main():
     print(
         f"[cfg] model={model_cfg['id']} split={split} n={len(items)} "
         f"data_seed={data_seed} run_seed={run_seed} temperature={temperature} "
-        f"prompt_style={args.prompt_style} rebuttal={args.rebuttal}"
+        f"prompt_style={args.prompt_style} rounds={args.rounds}"
     )
     set_seed(run_seed)
     model, tokenizer = load_model(
@@ -137,7 +142,7 @@ def main():
 
     prefix_name = (
         f"advocacy_{args.model}_{split}_n{len(items)}_{profile}_d{data_seed}_s{run_seed}"
-        f"_{args.prompt_style}_reb{int(args.rebuttal)}_ord{args.order_seed}"
+        f"_{args.prompt_style}_r{args.rounds}_ord{args.order_seed}"
         f"_judge-{safe_name(judge_model_id.split('/')[-1])}_jt{args.judge_temperature:g}"
     )
     output_dir = Path(args.output_dir)
@@ -169,7 +174,7 @@ def main():
             temperature=temperature,
             max_new_tokens=max_new_tokens,
             enable_thinking=enable_thinking,
-            rebuttal=args.rebuttal,
+            rounds=args.rounds,
             prompt_style=args.prompt_style,
             seed_hook=lambda seed: set_seed(int(seed) % (2**32)),
         )
@@ -178,8 +183,13 @@ def main():
             "item_id": key,
             "gold": item["gold"],
             "issue": item["issue"],
+            "rounds": advocacy["rounds"],
             "assigned_stances": advocacy["assigned_stances"],
             "advocate_cases": cases,
+            "analyses_by_round": advocacy["analyses_by_round"],
+            "label_trajectory": round_label_trajectory(
+                advocacy["analyses_by_round"], advocacy["assigned_stances"]
+            ),
             "peer_orders": advocacy["peer_orders"],
             "compliance": compliance(cases),
             "advocacy_cost": {
@@ -225,7 +235,7 @@ def main():
             row["pred"] = row["judge_prediction"]
             row["pred_source"] = "judge"
         else:
-            label, reason = support_fallback(cases, key, args.order_seed)
+            label, reason = judge_failure_fallback(key, args.order_seed)
             row["pred"] = label
             row["pred_source"] = "fallback"
             row["fallback_used"] = True
@@ -250,7 +260,7 @@ def main():
             "run_seed": run_seed,
             "advocate_temperature": temperature,
             "advocate_max_new_tokens": max_new_tokens,
-            "rebuttal": args.rebuttal,
+            "rounds": args.rounds,
             "order_seed": args.order_seed,
             "judge_enabled": args.judge_enabled,
             "judge_temperature": args.judge_temperature,
@@ -273,12 +283,11 @@ def main():
             "mismatched_by_stance": dict(
                 Counter(s for r in rows for s in r["compliance"]["mismatched_stances"])
             ),
-            "declared_support": {
-                stance: dict(
-                    Counter(r["compliance"]["declared_support"].get(stance) for r in rows)
-                )
-                for stance in STANCE_LABELS
-            },
+            "held_assigned_by_round": [
+                sum(sum(t["held_assigned"]) for r in rows for t in r["label_trajectory"]
+                    if t["round"] == round_index)
+                for round_index in range(args.rounds)
+            ],
         },
         "judged_label_counts": dict(Counter(preds)),
         "gold_label_counts": dict(Counter(golds)),
@@ -324,7 +333,7 @@ def main():
     save_json(prefix.with_suffix(".config.json"), vars(args))
     with open(prefix.with_suffix(".csv"), "w", newline="", encoding="utf-8-sig") as handle:
         fields = ["item_id", "gold", "pred", "pred_source", "correct",
-                  "assigned_stances", "fallback_used", "fallback_reason"]
+                  "rounds", "assigned_stances", "fallback_used", "fallback_reason"]
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for row in rows:

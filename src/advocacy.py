@@ -1,13 +1,22 @@
-"""Stance-advocacy debate: one agent per label, then a contrastive judge.
+"""Stance-advocacy debate: one agent per label, R rounds, then a judge.
 
 Every label is argued for exactly once, so unlike free-form sampling the gold
 label always appears among the candidates. That directly targets the failure
 this repository measured on saved runs: most residual errors are items where no
 agent ever proposed the gold label, which no aggregation rule can repair.
 
+Round 0 is the independent case for each assigned label; every later round shows
+each agent the other agents' latest cases so it can rebut or concede. Two rounds
+is the base configuration, matching PREDICT's fixed two-round debate; the round
+count is a parameter so the iteration limit can be raised later.
+
+Consensus is never required or checked. The three agents disagree by
+construction and the judge always decides, as in ToC, PREDICT and MAD. The
+fallback here is not a consensus rule: it only covers a judge whose output
+carries no stance label at all.
+
 Model calls arrive through the same lazy shim used by :mod:`src.selective_judge`,
-so prompt construction, parsing and the fallback rule stay importable without
-torch.
+so prompt construction, parsing and routing stay importable without torch.
 """
 from __future__ import annotations
 
@@ -17,18 +26,15 @@ import re
 import time
 from typing import Any, Callable, Mapping, Sequence
 
-from .consensus import LABELS, parse_stance, stable_seed
+from .consensus import LABELS, deterministic_fallback, parse_stance, stable_seed
 from .prompts.advocacy import (
     JUDGE_SCHEMA,
     STANCE_LABELS,
-    SUPPORT_LEVELS,
     advocate_question,
     format_peers,
     get_prompt_style,
 )
 from .selective_judge import count_tokens, parse_judge_json, repair_payload
-
-SUPPORT_RANK = {level: rank for rank, level in enumerate(SUPPORT_LEVELS)}
 
 
 def build_messages(user_content, system_prompt=None, history=None):
@@ -51,18 +57,8 @@ def strip_think(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
-def parse_support_level(text: str) -> str | None:
-    """The self-reported strength of the assigned stance, if stated."""
-    matches = re.findall(
-        r"support\s+for\s+the\s+assigned\s+stance\s*[:\-]?\s*<?\s*(weak|moderate|strong)",
-        text,
-        flags=re.IGNORECASE,
-    )
-    return matches[-1].lower() if matches else None
-
-
 def assigned_stances(item_id: Any, order_seed: int) -> list[str]:
-    """Which agent index argues which label. Shuffled so the agent index carries
+    """Which agent index argues which label, shuffled so the agent index carries
     no fixed meaning across items."""
     stances = list(STANCE_LABELS)
     random.Random(stable_seed(order_seed, item_id, "advocate_assignment")).shuffle(stances)
@@ -70,18 +66,22 @@ def assigned_stances(item_id: Any, order_seed: int) -> list[str]:
 
 
 def peer_order(
-    cases: Sequence[Mapping[str, Any]], agent_index: int, item_id: Any, order_seed: int
+    analyses: Sequence[str],
+    stances: Sequence[str],
+    agent_index: int,
+    item_id: Any,
+    order_seed: int,
+    round_index: int,
 ) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:
-    others = [
-        (index, case) for index, case in enumerate(cases) if index != agent_index
-    ]
+    """The other agents' latest cases, shuffled reproducibly per round."""
+    others = [index for index in range(len(analyses)) if index != agent_index]
     random.Random(
-        stable_seed(order_seed, item_id, f"advocate_peers_{agent_index}")
+        stable_seed(order_seed, item_id, f"advocate_peers_{round_index}_{agent_index}")
     ).shuffle(others)
-    peers = [(case["stance"], case["analysis"]) for _, case in others]
+    peers = [(stances[index], analyses[index]) for index in others]
     order = [
-        {"position": position, "source_agent_index": index, "stance": case["stance"]}
-        for position, (index, case) in enumerate(others, start=1)
+        {"position": position, "source_agent_index": index, "stance": stances[index]}
+        for position, index in enumerate(others, start=1)
     ]
     return peers, order
 
@@ -90,66 +90,49 @@ def run_advocacy(
     model,
     tokenizer,
     item: Mapping[str, Any],
+    rounds: int = 2,
     order_seed: int = 0,
     generation_seed: int = 0,
     temperature: float = 1.0,
     max_new_tokens: int = 1024,
     enable_thinking: bool | None = False,
-    rebuttal: bool = False,
     prompt_style: str = "toc",
     seed_hook: Callable[[int], Any] | None = None,
 ) -> dict[str, Any]:
-    """One advocate per label, optionally followed by one rebuttal round."""
+    """One advocate per label for ``rounds`` rounds."""
+    if rounds < 1:
+        raise ValueError("rounds must be at least 1")
     style = get_prompt_style(prompt_style)
     item_id = item.get("id")
     stances = assigned_stances(item_id, order_seed)
-    cases: list[dict[str, Any]] = []
-    contexts: list[list[dict[str, str]]] = []
+    contexts = [
+        build_messages(
+            advocate_question(item, stance, style=prompt_style),
+            system_prompt=style["advocate_system"],
+        )
+        for stance in stances
+    ]
+    analyses_by_round: list[list[str]] = []
+    peer_orders: list[dict[str, Any]] = []
     input_tokens = output_tokens = calls = 0
     start = time.perf_counter()
 
-    for agent_index, stance in enumerate(stances):
-        question = advocate_question(item, stance, style=prompt_style)
-        messages = build_messages(question, system_prompt=style["advocate_system"])
-        agent_seed = stable_seed(generation_seed, item_id, f"advocate_{agent_index}")
-        if seed_hook is not None:
-            seed_hook(agent_seed)
-        reply = strip_think(
-            chat(
-                model,
-                tokenizer,
-                messages,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                enable_thinking=enable_thinking,
-            )
-        )
-        calls += 1
-        input_tokens += count_tokens(tokenizer, question) or 0
-        output_tokens += count_tokens(tokenizer, reply) or 0
-        contexts.append(messages + [{"role": "assistant", "content": reply}])
-        cases.append(
-            {
-                "agent_index": agent_index,
-                "stance": stance,
-                "analysis": reply,
-                "support": parse_support_level(reply),
-                # If the advocate volunteers a label of its own, a mismatch with
-                # the assigned stance means it did not take the assigned side.
-                "stated_label": parse_stance(reply),
-                "generation_seed": agent_seed,
-            }
-        )
-
-    peer_orders = []
-    if rebuttal:
-        revised = []
-        for agent_index, case in enumerate(cases):
-            peers, order = peer_order(cases, agent_index, item_id, order_seed)
-            prompt = style["rebuttal"].format(others=format_peers(peers))
-            messages = contexts[agent_index] + [{"role": "user", "content": prompt}]
+    for round_index in range(rounds):
+        round_analyses = []
+        for agent_index, stance in enumerate(stances):
+            if round_index > 0:
+                peers, order = peer_order(
+                    analyses_by_round[round_index - 1], stances, agent_index,
+                    item_id, order_seed, round_index,
+                )
+                prompt = style["rebuttal"].format(others=format_peers(peers))
+                contexts[agent_index].append({"role": "user", "content": prompt})
+                peer_orders.append(
+                    {"round": round_index, "agent_index": agent_index, "peer_order": order}
+                )
+            input_tokens += count_tokens(tokenizer, contexts[agent_index][-1]["content"]) or 0
             agent_seed = stable_seed(
-                generation_seed, item_id, f"advocate_rebuttal_{agent_index}"
+                generation_seed, item_id, f"advocate_{round_index}_{agent_index}"
             )
             if seed_hook is not None:
                 seed_hook(agent_seed)
@@ -157,34 +140,36 @@ def run_advocacy(
                 chat(
                     model,
                     tokenizer,
-                    messages,
+                    contexts[agent_index],
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,
                     enable_thinking=enable_thinking,
                 )
             )
+            contexts[agent_index].append({"role": "assistant", "content": reply})
+            round_analyses.append(reply)
             calls += 1
-            input_tokens += count_tokens(tokenizer, prompt) or 0
             output_tokens += count_tokens(tokenizer, reply) or 0
-            peer_orders.append({"agent_index": agent_index, "peer_order": order})
-            revised.append(
-                {
-                    **case,
-                    "analysis": reply,
-                    "initial_analysis": case["analysis"],
-                    "support": parse_support_level(reply) or case["support"],
-                    "initial_support": case["support"],
-                    "stated_label": parse_stance(reply),
-                }
-            )
-        cases = revised
+        analyses_by_round.append(round_analyses)
 
+    cases = [
+        {
+            "agent_index": agent_index,
+            "stance": stances[agent_index],
+            "analysis": analyses_by_round[-1][agent_index],
+            # A volunteered label that differs from the assigned one means the
+            # agent did not argue the side it was given.
+            "stated_label": parse_stance(analyses_by_round[-1][agent_index]),
+        }
+        for agent_index in range(len(stances))
+    ]
     return {
         "prompt_style": prompt_style,
+        "rounds": rounds,
         "assigned_stances": stances,
+        "analyses_by_round": analyses_by_round,
         "cases": cases,
         "peer_orders": peer_orders,
-        "rebuttal": rebuttal,
         "calls": calls,
         "latency_seconds": time.perf_counter() - start,
         "token_usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
@@ -243,7 +228,7 @@ def run_advocacy_judge(
     enable_thinking: bool | None = False,
     prompt_style: str = "toc",
 ) -> dict[str, Any]:
-    """Judge the three cases.
+    """Judge the final cases.
 
     The output contract follows the prompt style: ToC's judge writes prose and
     names the label in its final line, so it is read with the same parser the
@@ -324,43 +309,43 @@ def run_advocacy_judge(
     }
 
 
-def support_fallback(
-    cases: Sequence[Mapping[str, Any]], item_id: Any, fallback_seed: int = 0
-) -> tuple[str, str]:
-    """Used only when the judge returns nothing.
+def judge_failure_fallback(item_id: Any, fallback_seed: int = 0) -> tuple[str, str]:
+    """Last resort when the judge produced no label in any attempt.
 
-    There is no majority to fall back on here, so the label whose advocate
-    reported the strongest support wins; ties are broken deterministically.
+    There is no majority to fall back on: the advocates disagree by design. This
+    is a broken generation rather than an unresolved debate, so the label is
+    chosen deterministically from the item id and the count is reported. A run
+    with a non-trivial fallback count should be treated as invalid.
     """
-    ranked = [
-        (SUPPORT_RANK.get(case.get("support") or "", -1), case["stance"]) for case in cases
-    ]
-    best = max(rank for rank, _ in ranked)
-    winners = sorted(stance for rank, stance in ranked if rank == best)
-    if len(winners) == 1:
-        return winners[0], "strongest_declared_support"
-    if best < 0:
-        reason = "no_declared_support_deterministic_fallback"
-    else:
-        reason = "tied_declared_support_deterministic_fallback"
-    chosen = random.Random(stable_seed(fallback_seed, item_id, "advocacy_fallback")).choice(
-        winners
-    )
-    return chosen, reason
+    return deterministic_fallback(item_id, fallback_seed), "judge_no_label_deterministic"
 
 
 def compliance(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Did the advocates argue the side they were given?"""
-    stated = [
-        case for case in cases if case.get("stated_label") in LABELS
-    ]
-    mismatched = [
-        case for case in stated if case["stated_label"] != case["stance"]
-    ]
+    stated = [case for case in cases if case.get("stated_label") in LABELS]
+    mismatched = [case for case in stated if case["stated_label"] != case["stance"]]
     return {
         "agents": len(cases),
         "stated_label_present": len(stated),
         "stated_label_mismatch": len(mismatched),
         "mismatched_stances": [case["stance"] for case in mismatched],
-        "declared_support": {case["stance"]: case.get("support") for case in cases},
     }
+
+
+def round_label_trajectory(analyses_by_round, stances) -> list[dict[str, Any]]:
+    """Per round, the label each agent's text actually reads as.
+
+    Useful when the round limit is raised: it shows whether advocates hold their
+    assigned side or drift, without that ever affecting the decision.
+    """
+    return [
+        {
+            "round": round_index,
+            "stated_labels": [parse_stance(text) for text in round_analyses],
+            "held_assigned": [
+                parse_stance(text) in (None, stance)
+                for text, stance in zip(round_analyses, stances)
+            ],
+        }
+        for round_index, round_analyses in enumerate(analyses_by_round)
+    ]
