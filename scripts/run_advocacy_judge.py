@@ -277,12 +277,14 @@ def main():
         "prediction_source_counts": dict(Counter(row["pred_source"] for row in rows)),
         "fallback_used": sum(row["fallback_used"] for row in rows),
         "compliance": {
-            "stated_label_present": sum(r["compliance"]["stated_label_present"] for r in rows),
-            "stated_label_mismatch": sum(r["compliance"]["stated_label_mismatch"] for r in rows),
             "agent_answers": sum(r["compliance"]["agents"] for r in rows),
-            "mismatched_by_stance": dict(
-                Counter(s for r in rows for s in r["compliance"]["mismatched_stances"])
+            "declared_label": sum(r["compliance"]["declared_label"] for r in rows),
+            "declared_defection": sum(r["compliance"]["declared_defection"] for r in rows),
+            "defected_by_stance": dict(
+                Counter(s for r in rows for s in r["compliance"]["defected_stances"])
             ),
+            "last_mention_only": sum(r["compliance"]["last_mention_only"] for r in rows),
+            "last_mention_differs": sum(r["compliance"]["last_mention_differs"] for r in rows),
             "held_assigned_by_round": [
                 sum(sum(t["held_assigned"]) for r in rows for t in r["label_trajectory"]
                     if t["round"] == round_index)
@@ -346,10 +348,12 @@ def main():
     print("\n===== ADVOCACY + JUDGE =====")
     print(f"accuracy={summary['metrics']['accuracy']:.4f}  "
           f"macro_f1={summary['metrics']['macro_f1']:.4f}  items={len(rows)}")
+    c = summary["compliance"]
     print(f"fallbacks={summary['fallback_used']}  "
-          f"advocate answers with a mismatched stated label="
-          f"{summary['compliance']['stated_label_mismatch']}"
-          f"/{summary['compliance']['agent_answers']}")
+          f"advocates that declared a different stance="
+          f"{c['declared_defection']}/{c['declared_label']} declared "
+          f"(of {c['agent_answers']} answers; {c['last_mention_differs']}"
+          f"/{c['last_mention_only']} only differ in the last label mentioned)")
     comparison = summary.get("baseline_comparison")
     if comparison:
         t = comparison["transitions"]

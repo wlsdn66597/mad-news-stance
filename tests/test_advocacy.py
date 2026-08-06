@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from src.advocacy import (
     assigned_stances,
+    stated_label,
     compliance,
     judge_candidates,
     judge_failure_fallback,
@@ -45,12 +46,13 @@ class RecordingChat:
         return self.replies.pop(0)
 
 
-def case(stance, analysis=None):
+def case(stance, analysis=None, declared=None, source=None):
     return {
         "agent_index": STANCE_LABELS.index(stance),
         "stance": stance,
         "analysis": analysis or f"evidence for {stance}",
-        "stated_label": None,
+        "stated_label": declared,
+        "stated_label_source": source,
     }
 
 
@@ -172,14 +174,17 @@ class LabelTrajectoryTest(unittest.TestCase):
         stances = ["supportive", "oppositional", "neutral"]
         analyses_by_round = [
             ["Final stance: supportive", "Final stance: oppositional", "no label"],
-            ["Final stance: supportive", "Final stance: neutral", "no label"],
+            ["Final stance: supportive", "Final stance: neutral",
+             "the article reads as supportive to some"],
         ]
         trajectory = round_label_trajectory(analyses_by_round, stances)
         self.assertEqual(len(trajectory), 2)
         self.assertEqual(trajectory[0]["held_assigned"], [True, True, True])
-        # the oppositional advocate conceded to neutral in round 1
+        # the oppositional advocate declared neutral in round 1: a real concession
         self.assertEqual(trajectory[1]["held_assigned"], [True, False, True])
         self.assertEqual(trajectory[1]["stated_labels"][1], "neutral")
+        # the third only mentions another label in passing, so it still holds
+        self.assertEqual(trajectory[1]["stated_label_sources"][2], "mention")
 
 
 class JudgeInputTest(unittest.TestCase):
@@ -295,18 +300,43 @@ class FallbackTest(unittest.TestCase):
         self.assertGreater(len(labels), 1)
 
 
+class StatedLabelTest(unittest.TestCase):
+    def test_an_explicit_line_is_a_declaration(self):
+        self.assertEqual(
+            stated_label("weighing it up\nFinal stance: oppositional"),
+            ("oppositional", "marker"),
+        )
+
+    def test_discussing_counter_evidence_is_only_a_mention(self):
+        """The reason the first smoke reported 26/60 defections: an advocate
+        that argues supportive and then names counter-evidence ends on another
+        label word, which the fallback parser picks up."""
+        text = ("The framing is positive, so a supportive reading fits. "
+                "Counter-evidence: the close merely reports both sides, which "
+                "some would call neutral.")
+        label, source = stated_label(text)
+        self.assertEqual(label, "neutral")
+        self.assertEqual(source, "mention")
+
+    def test_no_label_at_all(self):
+        self.assertEqual(stated_label("nothing relevant here"), (None, None))
+
+
 class ComplianceTest(unittest.TestCase):
-    def test_counts_advocates_that_argued_another_side(self):
+    def test_only_explicit_declarations_count_as_defection(self):
         cases = [
-            dict(case("supportive"), stated_label="supportive"),
-            dict(case("oppositional"), stated_label="neutral"),
-            dict(case("neutral"), stated_label=None),
+            case("supportive", declared="supportive", source="marker"),
+            case("oppositional", declared="neutral", source="marker"),
+            case("neutral", declared="supportive", source="mention"),
         ]
         report = compliance(cases)
         self.assertEqual(report["agents"], 3)
-        self.assertEqual(report["stated_label_present"], 2)
-        self.assertEqual(report["stated_label_mismatch"], 1)
-        self.assertEqual(report["mismatched_stances"], ["oppositional"])
+        self.assertEqual(report["declared_label"], 2)
+        self.assertEqual(report["declared_defection"], 1)
+        self.assertEqual(report["defected_stances"], ["oppositional"])
+        # the mention-only disagreement is reported but not called a defection
+        self.assertEqual(report["last_mention_only"], 1)
+        self.assertEqual(report["last_mention_differs"], 1)
 
 
 if __name__ == "__main__":

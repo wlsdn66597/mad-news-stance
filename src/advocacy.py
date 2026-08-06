@@ -57,6 +57,34 @@ def strip_think(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
+STANCE_MARKER = re.compile(
+    r"final\s*stance\s*[:=\-]>?\s*[\"'(]?\s*([a-z]+)", re.IGNORECASE
+)
+
+
+def stated_label(text: str) -> tuple[str | None, str | None]:
+    """The label an advocate's own text claims, and how firmly.
+
+    ``marker`` means the text carried an explicit "Final stance:" line, which is
+    a real statement of position. ``mention`` means no marker was present and
+    the label is only the last one named anywhere in the prose -- an advocate
+    that dutifully discusses counter-evidence names other labels all the time,
+    so a mention is not evidence that it abandoned its assigned side.
+    """
+    if not isinstance(text, str):
+        return None, None
+    matches = STANCE_MARKER.findall(text)
+    if matches:
+        for label in LABELS:
+            if matches[-1].lower().startswith(label[:4]):
+                return label, "marker"
+    lowered = text.lower()
+    found = [label for label in LABELS if label in lowered]
+    if found:
+        return max(found, key=lambda label: lowered.rfind(label)), "mention"
+    return None, None
+
+
 def assigned_stances(item_id: Any, order_seed: int) -> list[str]:
     """Which agent index argues which label, shuffled so the agent index carries
     no fixed meaning across items."""
@@ -157,9 +185,8 @@ def run_advocacy(
             "agent_index": agent_index,
             "stance": stances[agent_index],
             "analysis": analyses_by_round[-1][agent_index],
-            # A volunteered label that differs from the assigned one means the
-            # agent did not argue the side it was given.
-            "stated_label": parse_stance(analyses_by_round[-1][agent_index]),
+            "stated_label": stated_label(analyses_by_round[-1][agent_index])[0],
+            "stated_label_source": stated_label(analyses_by_round[-1][agent_index])[1],
         }
         for agent_index in range(len(stances))
     ]
@@ -321,14 +348,24 @@ def judge_failure_fallback(item_id: Any, fallback_seed: int = 0) -> tuple[str, s
 
 
 def compliance(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Did the advocates argue the side they were given?"""
-    stated = [case for case in cases if case.get("stated_label") in LABELS]
-    mismatched = [case for case in stated if case["stated_label"] != case["stance"]]
+    """Did the advocates argue the side they were given?
+
+    Only an explicit "Final stance:" line counts as the advocate stating a
+    position. A label that merely appears last in the prose is reported
+    separately: an advocate discussing counter-evidence names the other labels
+    routinely, so counting those as defections wildly overstates the rate.
+    """
+    declared = [case for case in cases if case.get("stated_label_source") == "marker"]
+    defected = [case for case in declared if case["stated_label"] != case["stance"]]
+    mentioned = [case for case in cases if case.get("stated_label_source") == "mention"]
+    mention_differs = [case for case in mentioned if case["stated_label"] != case["stance"]]
     return {
         "agents": len(cases),
-        "stated_label_present": len(stated),
-        "stated_label_mismatch": len(mismatched),
-        "mismatched_stances": [case["stance"] for case in mismatched],
+        "declared_label": len(declared),
+        "declared_defection": len(defected),
+        "defected_stances": [case["stance"] for case in defected],
+        "last_mention_only": len(mentioned),
+        "last_mention_differs": len(mention_differs),
     }
 
 
@@ -336,16 +373,22 @@ def round_label_trajectory(analyses_by_round, stances) -> list[dict[str, Any]]:
     """Per round, the label each agent's text actually reads as.
 
     Useful when the round limit is raised: it shows whether advocates hold their
-    assigned side or drift, without that ever affecting the decision.
+    assigned side or concede, without that ever affecting the decision. Only an
+    explicit declaration counts as conceding; see :func:`compliance`.
     """
-    return [
-        {
-            "round": round_index,
-            "stated_labels": [parse_stance(text) for text in round_analyses],
-            "held_assigned": [
-                parse_stance(text) in (None, stance)
-                for text, stance in zip(round_analyses, stances)
-            ],
-        }
-        for round_index, round_analyses in enumerate(analyses_by_round)
-    ]
+    trajectory = []
+    for round_index, round_analyses in enumerate(analyses_by_round):
+        labels, sources = zip(*(stated_label(text) for text in round_analyses))
+        trajectory.append(
+            {
+                "round": round_index,
+                "stated_labels": list(labels),
+                "stated_label_sources": list(sources),
+                # only an explicit declaration counts as leaving the assigned side
+                "held_assigned": [
+                    not (source == "marker" and label != stance)
+                    for label, source, stance in zip(labels, sources, stances)
+                ],
+            }
+        )
+    return trajectory

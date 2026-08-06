@@ -123,9 +123,13 @@ comparison against `--baseline-method`, and a compliance block.
 - **Fallback count.** `pred_source` should be `judge` for essentially every
   item. A high `fallback_used` means the judge is not producing labels, not that
   the debate was inconclusive.
-- **Compliance.** `compliance.stated_label_mismatch` counts advocate answers
-  whose own stated label contradicts the stance they were told to argue. If a
-  small model refuses the assigned side often, the design's premise is broken.
+- **Compliance.** `compliance.declared_defection` counts advocates whose own
+  explicit "Final stance:" line contradicts the stance they were told to argue.
+  Only an explicit declaration counts. A label that merely appears last in the
+  prose is reported separately as `last_mention_differs`: an advocate that
+  argues its side and then names counter-evidence ends on another label word all
+  the time, and counting those as defections put the first smoke run at 26/60
+  when the real rate was far lower.
 - **Neutral advocacy.** Arguing for the absence of a stance is structurally
   harder than arguing for a polarity; watch the per-class neutral scores and the
   `declared_support` distribution for `neutral`.
