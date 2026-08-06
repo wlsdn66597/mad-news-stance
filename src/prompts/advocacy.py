@@ -22,6 +22,41 @@ STANCE_LABELS = ("supportive", "oppositional", "neutral")
 
 SUPPORT_LEVELS = ("weak", "moderate", "strong")
 
+# ---------------------------------------------------------------- toc style
+# Close to the published Chain-of-Explanation / Contrastive-Verification
+# wording, only re-targeted from social media posts to news articles. Kept at
+# the same length as the paper's (34 and 82 words) and as this repository's
+# stance_minimal_en profile (32 words), so a gain cannot be attributed to a
+# longer, more structured instruction.
+
+TOC_ADVOCATE_SYSTEM_PROMPT = """You are an expert linguistic assistant.
+You will be tasked with explaining why a news article may have a stance towards a provided issue.
+You should discuss your reasoning in detail, thinking step-by-step."""
+
+TOC_ADVOCATE_USER_TEMPLATE = """News Article: {headline}
+{article}
+Issue: {issue}
+Stance: {stance}"""
+
+TOC_JUDGE_SYSTEM_PROMPT = """You are an expert linguistic assistant.
+You will be tasked with judging which stance value a news article has towards a provided issue.
+Thorough rationales will be provided for each stance value.
+You should discuss your reasoning in detail, thinking step-by-step.
+Discuss the strengths and weaknesses for each rationale, providing a final judgement for the stance value of the article towards the provided issue.
+Return valid JSON only."""
+
+TOC_REBUTTAL_TEMPLATE = """The other analysts argued as follows:
+
+{others}
+
+Based on your own analysis, agree with or rebut their arguments and explain your reason."""
+
+# ------------------------------------------------------------- our variant
+# Adds counter-evidence and a self-reported support level, and tells the judge
+# the analyses are assigned advocacy. Every advocate is fluent by construction,
+# so the judge needs a signal other than persuasiveness. Whether that pays for
+# the extra instruction length is exactly what --prompt-style ablates.
+
 ADVOCATE_SYSTEM_PROMPT = """You are an expert analyst of Korean news articles.
 
 You will be asked to explain why an article may take a specified stance toward a
@@ -86,10 +121,36 @@ JUDGE_SCHEMA = {
 }
 
 
-def advocate_question(item, stance: str) -> str:
+PROMPT_STYLES = {
+    "toc": {
+        "advocate_system": TOC_ADVOCATE_SYSTEM_PROMPT,
+        "advocate_user": TOC_ADVOCATE_USER_TEMPLATE,
+        "judge_system": TOC_JUDGE_SYSTEM_PROMPT,
+        "rebuttal": TOC_REBUTTAL_TEMPLATE,
+        "declares_support": False,
+    },
+    "structured": {
+        "advocate_system": ADVOCATE_SYSTEM_PROMPT,
+        "advocate_user": ADVOCATE_USER_TEMPLATE,
+        "judge_system": JUDGE_SYSTEM_PROMPT,
+        "rebuttal": REBUTTAL_TEMPLATE,
+        "declares_support": True,
+    },
+}
+
+
+def get_prompt_style(name: str) -> dict:
+    try:
+        return PROMPT_STYLES[name]
+    except KeyError as exc:
+        choices = ", ".join(sorted(PROMPT_STYLES))
+        raise ValueError(f"unknown prompt style {name!r}; choose one of: {choices}") from exc
+
+
+def advocate_question(item, stance: str, style: str = "toc") -> str:
     if stance not in STANCE_LABELS:
         raise ValueError(f"unknown stance: {stance}")
-    return ADVOCATE_USER_TEMPLATE.format(
+    return get_prompt_style(style)["advocate_user"].format(
         issue=item.get("issue", ""),
         headline=item.get("headline", ""),
         article=item.get("article", ""),

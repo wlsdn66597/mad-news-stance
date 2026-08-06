@@ -19,14 +19,12 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .consensus import LABELS, parse_stance, stable_seed
 from .prompts.advocacy import (
-    ADVOCATE_SYSTEM_PROMPT,
     JUDGE_SCHEMA,
-    JUDGE_SYSTEM_PROMPT,
-    REBUTTAL_TEMPLATE,
     STANCE_LABELS,
     SUPPORT_LEVELS,
     advocate_question,
     format_peers,
+    get_prompt_style,
 )
 from .selective_judge import count_tokens, parse_judge_json, repair_payload
 
@@ -98,9 +96,11 @@ def run_advocacy(
     max_new_tokens: int = 1024,
     enable_thinking: bool | None = False,
     rebuttal: bool = False,
+    prompt_style: str = "toc",
     seed_hook: Callable[[int], Any] | None = None,
 ) -> dict[str, Any]:
     """One advocate per label, optionally followed by one rebuttal round."""
+    style = get_prompt_style(prompt_style)
     item_id = item.get("id")
     stances = assigned_stances(item_id, order_seed)
     cases: list[dict[str, Any]] = []
@@ -109,8 +109,8 @@ def run_advocacy(
     start = time.perf_counter()
 
     for agent_index, stance in enumerate(stances):
-        question = advocate_question(item, stance)
-        messages = build_messages(question, system_prompt=ADVOCATE_SYSTEM_PROMPT)
+        question = advocate_question(item, stance, style=prompt_style)
+        messages = build_messages(question, system_prompt=style["advocate_system"])
         agent_seed = stable_seed(generation_seed, item_id, f"advocate_{agent_index}")
         if seed_hook is not None:
             seed_hook(agent_seed)
@@ -146,7 +146,7 @@ def run_advocacy(
         revised = []
         for agent_index, case in enumerate(cases):
             peers, order = peer_order(cases, agent_index, item_id, order_seed)
-            prompt = REBUTTAL_TEMPLATE.format(others=format_peers(peers))
+            prompt = style["rebuttal"].format(others=format_peers(peers))
             messages = contexts[agent_index] + [{"role": "user", "content": prompt}]
             agent_seed = stable_seed(
                 generation_seed, item_id, f"advocate_rebuttal_{agent_index}"
@@ -180,6 +180,7 @@ def run_advocacy(
         cases = revised
 
     return {
+        "prompt_style": prompt_style,
         "assigned_stances": stances,
         "cases": cases,
         "peer_orders": peer_orders,
@@ -240,7 +241,9 @@ def run_advocacy_judge(
     max_retries: int = 1,
     temperature: float = 0.0,
     enable_thinking: bool | None = False,
+    prompt_style: str = "toc",
 ) -> dict[str, Any]:
+    judge_system_prompt = get_prompt_style(prompt_style)["judge_system"]
     candidates, candidate_order = judge_candidates(cases, item.get("id"), order_seed)
     payload = judge_user_payload(item, candidates)
     user_text = json.dumps(payload, ensure_ascii=False)
@@ -249,7 +252,7 @@ def run_advocacy_judge(
     current_text = user_text
     start = time.perf_counter()
     for attempt_index in range(max_retries + 1):
-        messages = build_messages(current_text, system_prompt=JUDGE_SYSTEM_PROMPT)
+        messages = build_messages(current_text, system_prompt=judge_system_prompt)
         raw = strip_think(
             chat(
                 model,

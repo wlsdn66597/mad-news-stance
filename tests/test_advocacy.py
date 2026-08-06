@@ -13,7 +13,7 @@ from src.advocacy import (
     run_advocacy_judge,
     support_fallback,
 )
-from src.prompts.advocacy import STANCE_LABELS, advocate_question
+from src.prompts.advocacy import PROMPT_STYLES, STANCE_LABELS, advocate_question
 
 
 class FakeTokenizer:
@@ -43,15 +43,35 @@ def case(stance, support="moderate", analysis=None):
 
 
 class AdvocatePromptTest(unittest.TestCase):
-    def test_prompt_carries_the_assigned_stance_and_no_gold(self):
-        for stance in STANCE_LABELS:
-            prompt = advocate_question(ITEM, stance)
-            self.assertIn(f"Assigned stance: {stance}", prompt)
-            self.assertIn(ITEM["article"], prompt)
-            self.assertNotIn("gold", prompt.lower())
-            # the other two labels must not be suggested as the answer
-            for other in set(STANCE_LABELS) - {stance}:
-                self.assertNotIn(f"Assigned stance: {other}", prompt)
+    def test_every_style_carries_the_assigned_stance_and_no_gold(self):
+        for style in PROMPT_STYLES:
+            for stance in STANCE_LABELS:
+                prompt = advocate_question(ITEM, stance, style=style)
+                self.assertIn(stance, prompt, style)
+                self.assertIn(ITEM["article"], prompt)
+                self.assertNotIn("gold", prompt.lower())
+                for other in set(STANCE_LABELS) - {stance}:
+                    self.assertNotIn(other, prompt, f"{style}/{stance} leaked {other}")
+
+    def test_toc_style_stays_close_to_the_published_prompt_length(self):
+        toc, structured = PROMPT_STYLES["toc"], PROMPT_STYLES["structured"]
+        # the published Chain-of-Explanation system prompt is 34 words
+        self.assertLessEqual(len(toc["advocate_system"].split()), 40)
+        # and the contrastive-verification judge prompt is 82
+        self.assertLessEqual(len(toc["judge_system"].split()), 90)
+        self.assertGreater(
+            len(structured["advocate_system"].split()), len(toc["advocate_system"].split())
+        )
+
+    def test_only_the_structured_style_asks_for_a_support_level(self):
+        self.assertFalse(PROMPT_STYLES["toc"]["declares_support"])
+        self.assertTrue(PROMPT_STYLES["structured"]["declares_support"])
+        self.assertNotIn("weak", PROMPT_STYLES["toc"]["advocate_user"])
+        self.assertIn("weak", PROMPT_STYLES["structured"]["advocate_user"])
+
+    def test_unknown_style_is_rejected(self):
+        with self.assertRaises(ValueError):
+            advocate_question(ITEM, "neutral", style="verbose")
 
     def test_unknown_stance_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -101,7 +121,8 @@ class AdvocacyRoundTest(unittest.TestCase):
         rebuttals = [f"rebuttal {i}\nSupport for the assigned stance: strong" for i in range(3)]
         with patch("src.advocacy.chat", side_effect=outputs + rebuttals) as chat:
             result = run_advocacy(
-                object(), FakeTokenizer(), ITEM, order_seed=5, rebuttal=True
+                object(), FakeTokenizer(), ITEM, order_seed=5, rebuttal=True,
+                prompt_style="structured",
             )
         self.assertEqual(result["calls"], 6)
         self.assertEqual([c["support"] for c in result["cases"]], ["strong"] * 3)
@@ -175,6 +196,34 @@ class JudgeInputTest(unittest.TestCase):
             )
         self.assertIsNone(result["prediction"])
         self.assertEqual(len(result["attempts"]), 2)
+
+
+class PromptStyleRuntimeTest(unittest.TestCase):
+    def test_toc_style_sends_the_short_system_prompt_and_parses_no_support(self):
+        outputs = ["a rationale for the assigned stance"] * 3
+        with patch("src.advocacy.chat", side_effect=outputs) as chat:
+            result = run_advocacy(
+                object(), FakeTokenizer(), ITEM, order_seed=5, prompt_style="toc"
+            )
+        system = chat.call_args_list[0].args[2][0]["content"]
+        self.assertIn("expert linguistic assistant", system)
+        self.assertTrue(all(c["support"] is None for c in result["cases"]))
+        self.assertEqual(result["prompt_style"], "toc")
+
+    def test_judge_system_prompt_follows_the_style(self):
+        output = ('{"label":"neutral","evidence_sufficient":true,'
+                  '"evidence":["x"],"rationale":"y"}')
+        seen = {}
+        for style, marker in (("toc", "expert linguistic assistant"),
+                              ("structured", "advocacy arguments, not evidence")):
+            with patch("src.advocacy.chat", return_value=output) as chat:
+                run_advocacy_judge(
+                    object(), FakeTokenizer(), ITEM,
+                    [case(s) for s in STANCE_LABELS], prompt_style=style,
+                )
+            seen[style] = chat.call_args_list[0].args[2][0]["content"]
+            self.assertIn(marker, seen[style])
+        self.assertNotEqual(seen["toc"], seen["structured"])
 
 
 class FallbackTest(unittest.TestCase):

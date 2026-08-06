@@ -38,9 +38,9 @@ from src.consensus import (  # noqa: E402
 )
 from src.llm import load_model, model_context_window  # noqa: E402
 from src.prompts.advocacy import (  # noqa: E402
-    ADVOCATE_SYSTEM_PROMPT,
-    JUDGE_SYSTEM_PROMPT,
+    PROMPT_STYLES,
     STANCE_LABELS,
+    get_prompt_style,
 )
 from src.tasks.stance import Stance  # noqa: E402
 
@@ -56,6 +56,12 @@ def parse_args():
     parser.add_argument("--advocate-temperature", type=float, default=None)
     parser.add_argument("--advocate-max-new-tokens", type=int, default=None)
     parser.add_argument("--rebuttal", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--prompt-style", choices=sorted(PROMPT_STYLES), default="toc",
+        help="'toc' keeps the published prompt lengths; 'structured' adds "
+             "counter-evidence, a self-reported support level and an "
+             "advocacy-aware judge.",
+    )
     parser.add_argument("--order-seed", type=int, default=8001)
     parser.add_argument("--judge-enabled", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--judge-model")
@@ -106,7 +112,7 @@ def main():
     print(
         f"[cfg] model={model_cfg['id']} split={split} n={len(items)} "
         f"data_seed={data_seed} run_seed={run_seed} temperature={temperature} "
-        f"rebuttal={args.rebuttal}"
+        f"prompt_style={args.prompt_style} rebuttal={args.rebuttal}"
     )
     set_seed(run_seed)
     model, tokenizer = load_model(
@@ -131,7 +137,7 @@ def main():
 
     prefix_name = (
         f"advocacy_{args.model}_{split}_n{len(items)}_{profile}_d{data_seed}_s{run_seed}"
-        f"_reb{int(args.rebuttal)}_ord{args.order_seed}"
+        f"_{args.prompt_style}_reb{int(args.rebuttal)}_ord{args.order_seed}"
         f"_judge-{safe_name(judge_model_id.split('/')[-1])}_jt{args.judge_temperature:g}"
     )
     output_dir = Path(args.output_dir)
@@ -164,6 +170,7 @@ def main():
             max_new_tokens=max_new_tokens,
             enable_thinking=enable_thinking,
             rebuttal=args.rebuttal,
+            prompt_style=args.prompt_style,
             seed_hook=lambda seed: set_seed(int(seed) % (2**32)),
         )
         cases = advocacy["cases"]
@@ -198,6 +205,7 @@ def main():
                 max_retries=args.judge_max_retries,
                 temperature=args.judge_temperature,
                 enable_thinking=False,
+                prompt_style=args.prompt_style,
             )
             row.update(
                 {
@@ -249,8 +257,10 @@ def main():
             "judge_max_new_tokens": args.judge_max_new_tokens,
             "judge_max_retries": args.judge_max_retries,
             "labels": list(STANCE_LABELS),
-            "advocate_system_prompt": ADVOCATE_SYSTEM_PROMPT,
-            "judge_system_prompt": JUDGE_SYSTEM_PROMPT,
+            "prompt_style": args.prompt_style,
+            "advocate_system_prompt": get_prompt_style(args.prompt_style)["advocate_system"],
+            "advocate_user_template": get_prompt_style(args.prompt_style)["advocate_user"],
+            "judge_system_prompt": get_prompt_style(args.prompt_style)["judge_system"],
             "gold_available_to_agents_or_judge": False,
         },
         "metrics": classification_metrics(preds, golds),

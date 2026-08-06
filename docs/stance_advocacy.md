@@ -30,7 +30,19 @@ four rounds.
   separate agents before synthesis; its ablation attributes most of the gain to
   that decoupling rather than to the debate itself.
 
-Two deliberate departures from ToC:
+## Prompt style is an ablation, not a choice
+
+The published prompts are short: ToC's Chain-of-Explanation system prompt is 34
+words and its contrastive-verification judge 82; PREDICT's debater is 32 and MAD's
+16. This repository's own stance profile is 32 words, and every measured run uses
+it. A longer, more structured advocate prompt would therefore confound "assigning
+stances helps" with "a longer instruction helps", so both are available and the
+short one is the default.
+
+`--prompt-style toc` (default) keeps the published lengths: 33-word advocate,
+68-word judge, no extra output fields.
+
+`--prompt-style structured` is the variant with two deliberate departures from ToC:
 
 1. Each advocate must also report the strongest counter-evidence and how well
    the article supports its assigned stance (`weak|moderate|strong`). Every
@@ -51,6 +63,8 @@ python scripts/run_advocacy_judge.py \
   --output-dir results/advocacy
 ```
 
+`--prompt-style structured` runs the variant; the two differ only in prompt
+wording, so the pair isolates the instruction from the architecture.
 `--rebuttal` adds the PREDICT-style second round. `--limit N` runs the first N
 items. Runs are item-resumable: re-running the same command reuses
 `<prefix>.items.json` and only processes what is missing.
@@ -74,6 +88,9 @@ comparison against `--baseline-method`, and a compliance block.
 
 ## What to check first
 
+- **Prompt style.** With `--prompt-style toc` the advocates are not asked for a
+  support level, so `declared_support` is empty and a judge failure falls back
+  deterministically instead of by declared support.
 - **Compliance.** `compliance.stated_label_mismatch` counts advocate answers
   whose own stated label contradicts the stance they were told to argue. If a
   small model refuses the assigned side often, the design's premise is broken.
