@@ -243,12 +243,24 @@ def run_advocacy_judge(
     enable_thinking: bool | None = False,
     prompt_style: str = "toc",
 ) -> dict[str, Any]:
-    judge_system_prompt = get_prompt_style(prompt_style)["judge_system"]
+    """Judge the three cases.
+
+    The output contract follows the prompt style: ToC's judge writes prose and
+    names the label in its final line, so it is read with the same parser the
+    debate methods use; our variant keeps the strict JSON schema. A JSON answer
+    that fails validation is still searched for a stance label before the item
+    is handed to the fallback, since a truncated object usually carries one.
+    """
+    style = get_prompt_style(prompt_style)
+    judge_system_prompt = style["judge_system"]
+    output_format = style["judge_output"]
     candidates, candidate_order = judge_candidates(cases, item.get("id"), order_seed)
     payload = judge_user_payload(item, candidates)
     user_text = json.dumps(payload, ensure_ascii=False)
-    attempts = []
+    attempts: list[dict[str, Any]] = []
+    prediction = None
     parsed = None
+    recovered = False
     current_text = user_text
     start = time.perf_counter()
     for attempt_index in range(max_retries + 1):
@@ -264,10 +276,20 @@ def run_advocacy_judge(
             )
         )
         parse_error = None
-        try:
-            parsed = parse_judge_json(raw)
-        except ValueError as exc:
-            parse_error = str(exc)
+        if output_format == "final_line":
+            prediction = parse_stance(raw)
+            if prediction is None:
+                parse_error = "no stance label in the final line"
+        else:
+            try:
+                parsed = parse_judge_json(raw)
+                prediction = parsed["label"]
+            except ValueError as exc:
+                parse_error = str(exc)
+                salvaged = parse_stance(raw)
+                if salvaged is not None:
+                    prediction, recovered = salvaged, True
+                    parse_error = f"{exc} (label recovered from the text)"
         attempts.append(
             {
                 "attempt": attempt_index,
@@ -278,15 +300,21 @@ def run_advocacy_judge(
                 "output_tokens": count_tokens(tokenizer, raw),
             }
         )
-        if parsed is not None:
+        if prediction is not None:
             break
-        current_text = repair_payload(payload, raw)
+        current_text = (
+            style["judge_repair"].format(invalid_output=raw)
+            if style["judge_repair"]
+            else repair_payload(payload, raw)
+        )
     return {
-        "prediction": parsed["label"] if parsed else None,
+        "prediction": prediction,
         "parsed_output": parsed,
         "raw_output": attempts[-1]["raw_output"] if attempts else None,
         "attempts": attempts,
         "retry_count": max(0, len(attempts) - 1),
+        "output_format": output_format,
+        "label_recovered_from_text": recovered,
         "candidate_order": candidate_order,
         "latency_seconds": time.perf_counter() - start,
         "token_usage": {

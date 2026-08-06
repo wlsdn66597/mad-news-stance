@@ -198,6 +198,66 @@ class JudgeInputTest(unittest.TestCase):
         self.assertEqual(len(result["attempts"]), 2)
 
 
+class JudgeOutputFormatTest(unittest.TestCase):
+    """ToC's judge writes prose and names the label last; ours returns JSON."""
+
+    CASES = None
+
+    def setUp(self):
+        self.cases = [case(s) for s in STANCE_LABELS]
+
+    def test_toc_judge_reads_the_final_line(self):
+        prose = ("Analyst A overstates the framing, Analyst B is better grounded.\n"
+                 "Final stance: oppositional")
+        with patch("src.advocacy.chat", return_value=prose):
+            result = run_advocacy_judge(
+                object(), FakeTokenizer(), ITEM, self.cases, prompt_style="toc"
+            )
+        self.assertEqual(result["prediction"], "oppositional")
+        self.assertEqual(result["output_format"], "final_line")
+        self.assertEqual(result["retry_count"], 0)
+
+    def test_toc_judge_does_not_require_json(self):
+        """The failure that broke the first run: valid prose was rejected."""
+        prose = ("After weighing all three, the article reports without taking a side.\n"
+                 "Final stance: neutral")
+        with patch("src.advocacy.chat", return_value=prose):
+            result = run_advocacy_judge(
+                object(), FakeTokenizer(), ITEM, self.cases, prompt_style="toc"
+            )
+        self.assertIsNotNone(result["prediction"])
+        self.assertIsNone(result["attempts"][0]["parse_error"])
+
+    def test_toc_judge_retries_when_no_label_is_stated(self):
+        outputs = ["I cannot tell.",
+                   "On balance the framing is critical.\nFinal stance: oppositional"]
+        with patch("src.advocacy.chat", side_effect=outputs) as chat:
+            result = run_advocacy_judge(
+                object(), FakeTokenizer(), ITEM, self.cases, prompt_style="toc"
+            )
+        self.assertEqual(result["prediction"], "oppositional")
+        self.assertEqual(result["retry_count"], 1)
+        repair = chat.call_args_list[1].args[2][-1]["content"]
+        self.assertIn("end with exactly this line", repair)
+
+    def test_structured_judge_recovers_a_label_from_broken_json(self):
+        truncated = '{"label":"supportive","evidence_sufficient":true,"evidence":["fram'
+        with patch("src.advocacy.chat", return_value=truncated):
+            result = run_advocacy_judge(
+                object(), FakeTokenizer(), ITEM, self.cases, prompt_style="structured"
+            )
+        self.assertEqual(result["prediction"], "supportive")
+        self.assertTrue(result["label_recovered_from_text"])
+        self.assertIn("recovered", result["attempts"][0]["parse_error"])
+
+    def test_no_label_anywhere_still_fails(self):
+        with patch("src.advocacy.chat", side_effect=["???", "???"]):
+            result = run_advocacy_judge(
+                object(), FakeTokenizer(), ITEM, self.cases, prompt_style="toc"
+            )
+        self.assertIsNone(result["prediction"])
+
+
 class PromptStyleRuntimeTest(unittest.TestCase):
     def test_toc_style_sends_the_short_system_prompt_and_parses_no_support(self):
         outputs = ["a rationale for the assigned stance"] * 3

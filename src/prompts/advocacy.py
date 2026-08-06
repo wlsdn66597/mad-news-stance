@@ -43,7 +43,14 @@ You will be tasked with judging which stance value a news article has towards a 
 Thorough rationales will be provided for each stance value.
 You should discuss your reasoning in detail, thinking step-by-step.
 Discuss the strengths and weaknesses for each rationale, providing a final judgement for the stance value of the article towards the provided issue.
-Return valid JSON only."""
+Your final line should be exactly: Final stance: supportive, oppositional, or neutral"""
+
+TOC_JUDGE_REPAIR_TEMPLATE = """Your previous answer did not end with the required line.
+
+{invalid_output}
+
+Answer again and end with exactly this line:
+Final stance: <supportive|oppositional|neutral>"""
 
 TOC_REBUTTAL_TEMPLATE = """The other analysts argued as follows:
 
@@ -127,6 +134,8 @@ PROMPT_STYLES = {
         "advocate_user": TOC_ADVOCATE_USER_TEMPLATE,
         "judge_system": TOC_JUDGE_SYSTEM_PROMPT,
         "rebuttal": TOC_REBUTTAL_TEMPLATE,
+        "judge_output": "final_line",
+        "judge_repair": TOC_JUDGE_REPAIR_TEMPLATE,
         "declares_support": False,
     },
     "structured": {
@@ -134,6 +143,8 @@ PROMPT_STYLES = {
         "advocate_user": ADVOCATE_USER_TEMPLATE,
         "judge_system": JUDGE_SYSTEM_PROMPT,
         "rebuttal": REBUTTAL_TEMPLATE,
+        "judge_output": "json",
+        "judge_repair": None,
         "declares_support": True,
     },
 }

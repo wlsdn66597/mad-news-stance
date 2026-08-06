@@ -39,8 +39,13 @@ it. A longer, more structured advocate prompt would therefore confound "assignin
 stances helps" with "a longer instruction helps", so both are available and the
 short one is the default.
 
-`--prompt-style toc` (default) keeps the published lengths: 33-word advocate,
-68-word judge, no extra output fields.
+`--prompt-style toc` (default) keeps the published lengths and the published
+output contract: a 33-word advocate, a 76-word judge that writes prose and names
+the label in its final line, and no extra output fields. ToC never asks for JSON,
+and requiring it broke every judge call on the first EXAONE-1.2B run: the model
+followed "discuss your reasoning step-by-step" and never emitted an object, so
+all 20 items fell back. The final line is read with the same parser the debate
+methods use.
 
 `--prompt-style structured` is the variant with two deliberate departures from ToC:
 
@@ -49,8 +54,13 @@ short one is the default.
    advocate is fluent by construction, so the judge needs a signal other than
    persuasiveness, and the declared support doubles as a routing signal.
 2. The judge is told explicitly that the analyses are assigned advocacy rather
-   than independent opinions, and candidate order is shuffled per item with a
-   stable seed. ToC does neither.
+   than independent opinions, returns the strict JSON schema this repository's
+   selective judge already uses, and candidate order is shuffled per item with a
+   stable seed. ToC does none of these.
+
+A JSON answer that fails validation is searched for a stance label before the
+item is handed to the fallback, since a truncated object usually still carries
+one (`label_recovered_from_text`).
 
 ## Running
 
