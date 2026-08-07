@@ -127,12 +127,21 @@ def safe_name(value):
     return "".join(char if char.isalnum() or char in "-_" else "_" for char in str(value))
 
 
-# Everything the advocate cases depend on. --prompt-style is deliberately not
-# here: changing the judge's prompt while keeping the cases is the whole point
-# of --reuse-advocacy. It is reported instead.
+# What has to match for the two runs to be the same experiment on the same
+# items: the split, the item sampling, the label assignment and the round count.
 REUSE_MUST_MATCH = (
-    "config", "model", "split", "n", "data_seed", "run_seed", "order_seed",
-    "rounds", "advocate_temperature", "advocate_max_new_tokens", "limit",
+    "split", "n", "data_seed", "run_seed", "order_seed", "rounds", "limit",
+)
+
+# Reported, never enforced. In a judge-only pass no advocate runs, so --config,
+# --model and the advocate decoding settings describe *this run's judge*, not the
+# advocates that wrote the saved cases -- judging EXAONE cases with a Qwen config
+# is the intended use, not a mismatch. --prompt-style is likewise the thing being
+# ablated. All of them are still printed, because the advocates' identity is part
+# of what a result means.
+REUSE_PROVENANCE = (
+    "config", "model", "prompt_style", "advocate_temperature",
+    "advocate_max_new_tokens", "judge_model",
 )
 
 
@@ -172,18 +181,34 @@ def validate_reuse_config(args, source_path: Path):
         print("[reuse][warn] resolved from the yaml config, not compared: "
               + "; ".join(unchecked), flush=True)
     if mismatched:
-        message = ("the saved advocacy was produced with different settings:\n  "
+        message = ("the saved advocacy covers different items than this run:\n  "
                    + "\n  ".join(mismatched))
         if not args.allow_reuse_mismatch:
             raise SystemExit(message + "\nre-run advocacy, or pass --allow-reuse-mismatch")
         print(f"[reuse][warn] {message}", flush=True)
-    if saved.get("prompt_style") != args.prompt_style:
-        print(f"[reuse] judge prompt style {saved.get('prompt_style')!r} -> "
-              f"{args.prompt_style!r}; the cases keep the style they were written in",
-              flush=True)
+    changed = [
+        f"{key}: {saved.get(key)!r} -> {getattr(args, key, None)!r}"
+        for key in REUSE_PROVENANCE if saved.get(key) != getattr(args, key, None)
+    ]
+    if changed:
+        print("[reuse] the cases were written under, and this pass judges them with: "
+              + "; ".join(changed), flush=True)
     if saved.get("reuse_advocacy"):
         print(f"[reuse] source was itself a re-judge of {saved['reuse_advocacy']}", flush=True)
     return saved
+
+
+def advocate_model_from(saved_config):
+    """The model that actually wrote the reused cases.
+
+    In a judge-only pass the yaml on the command line describes the judge, so
+    without this the summary would name the judge as the advocate.
+    """
+    try:
+        with open(saved_config["config"], encoding="utf-8") as handle:
+            return yaml.safe_load(handle)["models"][saved_config["model"]]["id"]
+    except (KeyError, TypeError, OSError):
+        return None
 
 
 def clip(text, limit):
@@ -489,6 +514,11 @@ def main():
         "items": len(rows),
         "config": {
             "model_id": model_cfg["id"],
+            # in a rejudge the yaml describes the judge, so name the advocates
+            "advocate_model_id": (
+                advocate_model_from(reuse_source_config) or model_cfg["id"]
+                if reuse_source_config else model_cfg["id"]
+            ),
             "judge_model_id": judge_model_id,
             "prompt_profile": profile,
             "split": split,

@@ -87,13 +87,16 @@ config's quantization. Pass `--judge-load-in-4bit/--no-judge-load-in-4bit` to
 set the judge's quantization independently of the yaml config.
 
 Reuse is only valid if the cases came from the run you think they did, so the
-sibling `.config.json` is checked against this run's arguments: config, model,
-split, n, both seeds, `--order-seed`, `--rounds`, `--limit` and the advocate
-decoding settings must match. `--prompt-style` is deliberately *not* checked —
-changing the judge's prompt over fixed cases is the point — but the change is
-printed. Settings that were resolved from the yaml rather than the command line
-are reported as unchecked. `--allow-reuse-mismatch` downgrades the check to a
-warning. Per-round advocacy costs in a rejudge summary are inherited from the
+sibling `.config.json` is checked against this run's arguments. Enforced:
+`--split`, `--n`, `--data-seed`, `--run-seed`, `--order-seed`, `--rounds`,
+`--limit` — the split, the item sampling, the label assignment and the round
+count. Reported but never enforced: `--config`, `--model`, `--prompt-style` and
+the advocate decoding settings, because in a judge-only pass no advocate runs
+and those describe *this run's judge*. Judging EXAONE cases under a Qwen config
+is the intended use, not a mismatch; the summary records who actually wrote the
+cases in `config.advocate_model_id`. Settings resolved from the yaml rather than
+the command line are reported as unchecked, and `--allow-reuse-mismatch`
+downgrades the enforced check to a warning. Per-round advocacy costs in a rejudge summary are inherited from the
 source run (`cost.advocacy.inherited_from_reuse`), not produced by that pass.
 
 Two knobs exist for judge-only ablations:
