@@ -195,6 +195,10 @@ python scripts/run_phase2.py --split test --n 200
 
 See [docs/selective_judge.md](docs/selective_judge.md) for reproducible offline aggregation and selective-judge experiments.
 
+## 이어서 작업할 때
+
+현재 상태·측정 결과·다음 실험은 [HANDOFF.md](HANDOFF.md)에 정리돼 있다.
+
 ## Selective consensus round
 
 불안정 문항에서 곧바로 Judge를 부르지 않고 기존 3개 agent가 한 번 더 독립 재검토한 뒤,
