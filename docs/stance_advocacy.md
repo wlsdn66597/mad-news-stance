@@ -78,8 +78,35 @@ label named while rejecting a rationale must not win.
 
 A judge change does not need the advocates regenerated. `--reuse-advocacy
 <previous .items.json>` takes the saved cases and runs the judge alone, which
-turned a 10.7-hour run into a judge-only pass. The saved run must match
-`--rounds`. Output files gain a `_rejudge` marker so the two do not collide.
+turned a 10.7-hour run into a judge-only pass. Output files gain a `_rejudge`
+marker so the two do not collide.
+
+A judge-only pass **does not load the advocate model**: it has nothing to run,
+and loading it both wastes VRAM and forces the judge to inherit the advocate
+config's quantization. Pass `--judge-load-in-4bit/--no-judge-load-in-4bit` to
+set the judge's quantization independently of the yaml config.
+
+Reuse is only valid if the cases came from the run you think they did, so the
+sibling `.config.json` is checked against this run's arguments: config, model,
+split, n, both seeds, `--order-seed`, `--rounds`, `--limit` and the advocate
+decoding settings must match. `--prompt-style` is deliberately *not* checked —
+changing the judge's prompt over fixed cases is the point — but the change is
+printed. Settings that were resolved from the yaml rather than the command line
+are reported as unchecked. `--allow-reuse-mismatch` downgrades the check to a
+warning. Per-round advocacy costs in a rejudge summary are inherited from the
+source run (`cost.advocacy.inherited_from_reuse`), not produced by that pass.
+
+Two knobs exist for judge-only ablations:
+
+- `--judge-round 0|last` chooses which round the judge reads. 84.7% of round-1
+  outputs mention "Analyst" and round 1 is shorter than round 0 (1187 vs 1489
+  chars): the agents argue about each other rather than about the article, and
+  the judge only ever saw the last round. `--judge-round 0` gives it the
+  independent cases instead, at judge-only cost.
+- `--judge-order-seed` reshuffles the candidates without touching the label
+  assignment the cases were written under, so position bias can be re-tested on
+  the same cases. The summary reports the winning-position counts with a
+  chi-square test (`winning_candidate_position_test`).
 
 ```bash
 python scripts/run_advocacy_judge.py   --config config/phase2_exaone_stance_minimal_en.yaml --model exaone   --split test --n 1001 --data-seed 0 --run-seed 6000   --reuse-advocacy results/advocacy/<previous>.items.json   --baseline-result results/phase2/<majority run>.json --baseline-method majority   --output-dir results/advocacy
@@ -111,9 +138,18 @@ methods use.
    selective judge already uses, and candidate order is shuffled per item with a
    stable seed. ToC does none of these.
 
-A JSON answer that fails validation is searched for a stance label before the
-item is handed to the fallback, since a truncated object usually still carries
-one (`label_recovered_from_text`).
+A JSON answer that fails validation is **retried first**; only on the final
+attempt is the text searched for a stance label, since a truncated object
+usually still carries one (`label_recovered_from_text`). Salvaging on the first
+failure, as an earlier version did, accepts malformed output silently and
+reports the run as clean: `retries=0, fallback=0` in a saved summary says
+nothing unless `judge_diagnostics.label_recovered_from_text` and
+`judge_parse_errors` are also zero. Both are now counted from the attempt log,
+so a prose (`toc`) verdict is no longer miscounted as a recovery.
+
+The ToC repair turn resends the article and the three rationales along with the
+invalid output. Asking a judge to "answer again" with only its own broken output
+in context leaves it nothing to judge.
 
 ## Running
 
@@ -176,8 +212,16 @@ watched with `tail -f`.
 - **Neutral advocacy.** Arguing for the absence of a stance is structurally
   harder than arguing for a polarity; watch the per-class neutral scores and the
   `declared_support` distribution for `neutral`.
-- **Position bias.** Re-run with a different `--order-seed`; the judge should
-  not track candidate position.
+- **Position bias.** Re-judge the same cases with a different
+  `--judge-order-seed`; the judge should not track candidate position. Measured
+  on the Qwen3-8B structured judge: A/B/C = 383/328/290, chi-square 13.10, df 2,
+  p = 0.0014, with the order already shuffled per item. That is the judge
+  preferring the first slot.
+- **Advocacy input tokens.** `cost.advocacy.input_tokens` counts the rendered
+  chat template, so it includes the system prompt, the article and the agent's
+  own earlier turns. Any summary written before that fix counted only the newest
+  user turn and understates round 1 by most of the prompt; do not compare the
+  two.
 - **Drift across rounds.** `label_trajectory` records, per round, whether each
   agent's text still reads as its assigned label. It never affects the decision,
   but it shows whether advocates concede as the round limit rises.
@@ -194,3 +238,70 @@ The other informative control already exists: a judge fed *free-form* agent
 analyses (`run_selective_judge.py --judge-input-mode debate_trace`) scored below
 the article-only judge. This experiment asks whether *assigning* the stances
 makes those analyses useful where free-form ones were not.
+
+## The offline ceiling: are the cases separable at all?
+
+`scripts/advocacy_oracle.py` needs no GPU. Because one agent argues each label,
+the gold label is on the ballot for every item and a literally perfect judge
+scores 1.0 — a vacuous ceiling. The script measures the question that is not
+vacuous: **is the case arguing gold distinguishable from the two that are not?**
+
+It ranks the three saved cases by surface features — length, quoted passages,
+hedging cues, mentions of other analysts, and whether the advocate explicitly
+conceded its assigned side — and reports how often the gold case ranks first,
+with an exact two-sided binomial p-value against 1/3. It also reports how often
+each feature's pick agrees with the pick the judge actually made, which shows
+what the judge was tracking, and the winning-position chi-square.
+
+```bash
+python scripts/advocacy_oracle.py results/advocacy/<run>.items.json --round saved
+python scripts/advocacy_oracle.py results/advocacy/<run>.items.json --round 0
+```
+
+If no feature beats chance and the judge agrees with none of them, the cases
+carry no recoverable signal and no judge change will help.
+
+## Selective advocacy: keep the vote, commission only what is missing
+
+`src/selective_advocacy.py` + `scripts/run_selective_advocacy.py`.
+
+Assigning one agent per label makes every item 1:1:1 by construction, which
+discards the only aggregate signal a small model reliably produces: how many
+independent agents converged on a label. The measured consequence is a judge
+that does not behave like a repair step at all — against majority's 487 correct
+and 514 wrong items, the EXAONE structured judge kept 40.0% of the correct
+answers and fixed 38.3% of the errors (independent of majority), and the
+Qwen3-8B judge kept 29.4% and fixed 53.1% (anti-correlated with it).
+
+Selective advocacy keeps the existing free-form debate and its vote, and
+commissions a counterfactual case only for labels no agent proposed, only on
+items where the vote is unstable or a label is missing. The judge is given, per
+label, either the rationale of the agents that chose it *with their count* or a
+rationale marked as commissioned precisely because nobody chose it.
+
+- `--trigger instability` — tied final round, or round 0 overturned (the
+  selective-judge trigger).
+- `--trigger missing_label` — some label was never proposed.
+- `--trigger either` (default) — the union; `all` judges everything.
+- `--trigger-scope last|any_round` — whether a label proposed only in an earlier
+  round counts as proposed.
+- `--dry-run` prints the trigger counts and the exact call budget without
+  loading a model. Use it before committing GPU time.
+
+Cost is zero extra calls on stable items and at most (missing labels + 1) on the
+rest, against 7 per item for full two-round advocacy. Report it against
+`majority` at a matched budget, as always.
+
+```bash
+python scripts/run_selective_advocacy.py \
+  --input-result results/phase2/<debate run>.json \
+  --data-path data/k-news-stance_nosegment.json \
+  --config config/phase2_qwen8_stance_minimal_en.yaml --model qwen \
+  --advocate-model LGAI-EXAONE/EXAONE-4.0-1.2B \
+  --trigger either --dry-run
+```
+
+`judge_diagnostics.picked_commissioned` counts how often the judge went with a
+counterfactual nobody had proposed, and how many of those were right. If the
+judge almost never picks one, the commissioned cases are not the bottleneck; if
+it picks them often and is wrong, they are persuasive noise.
