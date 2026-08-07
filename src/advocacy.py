@@ -85,6 +85,28 @@ def stated_label(text: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def parse_final_verdict(text: str) -> str | None:
+    """The label a prose judgement settles on.
+
+    ToC asks for the stance value in the *final sentence*, after the discussion,
+    so the last sentence is read first. Taking the last label mentioned anywhere
+    would pick up a label named while weighing a rationale that was then
+    rejected.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    marker, source = stated_label(text)
+    if source == "marker":
+        return marker
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+    for line in reversed(lines[-3:]):
+        lowered = line.lower()
+        found = [label for label in LABELS if label in lowered]
+        if found:
+            return max(found, key=lambda label: lowered.rfind(label))
+    return marker
+
+
 def assigned_stances(item_id: Any, order_seed: int) -> list[str]:
     """Which agent index argues which label, shuffled so the agent index carries
     no fixed meaning across items."""
@@ -327,9 +349,9 @@ def run_advocacy_judge(
         )
         parse_error = None
         if output_format == "final_line":
-            prediction = parse_stance(raw)
+            prediction = parse_final_verdict(raw)
             if prediction is None:
-                parse_error = "no stance label in the final line"
+                parse_error = "no stance value in the closing sentences"
         else:
             try:
                 parsed = parse_judge_json(raw)

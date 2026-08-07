@@ -46,7 +46,7 @@ You will be tasked with judging which stance value a news article has towards a 
 Thorough rationales will be provided for each stance value.
 You should discuss your reasoning in detail, thinking step-by-step.
 Discuss the strengths and weaknesses for each rationale, providing a final judgement for the stance value of the article towards the provided issue.
-Your final line should be exactly: Final stance: supportive, oppositional, or neutral"""
+Your final sentence should include only one possible stance value: supportive, oppositional, or neutral"""
 
 TOC_JUDGE_USER_TEMPLATE = """News Article: {headline}
 {article}
@@ -55,12 +55,13 @@ Issue: {issue}
 
 TOC_JUDGE_ANALYSIS_TEMPLATE = "Stance: {stance} Rationale: {analysis}"
 
-TOC_JUDGE_REPAIR_TEMPLATE = """Your previous answer did not end with the required line.
+TOC_JUDGE_REPAIR_TEMPLATE = """Your previous answer did not name a stance value.
 
 {invalid_output}
 
-Answer again and end with exactly this line:
-""" + LABEL_LINE
+Answer again. Discuss the strengths and weaknesses of each rationale, and make
+your final sentence include only one possible stance value: supportive,
+oppositional, or neutral."""
 
 # ------------------------------------------------------------- our variant
 

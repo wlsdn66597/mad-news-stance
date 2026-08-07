@@ -55,6 +55,36 @@ thing: a judge whose output carried no stance label in any attempt. That is a
 broken generation, so the label is chosen deterministically from the item id and
 the count is reported. A run with a non-trivial fallback count is invalid.
 
+## The judge must be allowed to reason
+
+The judge closing instruction was first written as *"Your final line should be
+exactly: Final stance: <label>"*. A 1.2B judge read that as "output only this
+line": on the full 1001-item run, **841 of 1001 judge answers were under 30
+characters** (median 24, e.g. `Final stance: supportive`) and the whole judge
+stage took 2.4 minutes. The contrastive verification that the method depends on
+never ran, and the result was 4.8 points below majority voting.
+
+The wording is now ToC's own — *"Your final sentence should include only one
+possible stance value"* — which names the value after the discussion instead of
+replacing it. `judge_diagnostics.judge_output_chars` reports the median length
+and how many answers were bare verdicts, so this failure is visible in the
+summary rather than only in a post-hoc script.
+
+Because the verdict now sits in prose, it is read from the closing sentences
+(`parse_final_verdict`) rather than from the last label mentioned anywhere: a
+label named while rejecting a rationale must not win.
+
+## Re-running only the judge
+
+A judge change does not need the advocates regenerated. `--reuse-advocacy
+<previous .items.json>` takes the saved cases and runs the judge alone, which
+turned a 10.7-hour run into a judge-only pass. The saved run must match
+`--rounds`. Output files gain a `_rejudge` marker so the two do not collide.
+
+```bash
+python scripts/run_advocacy_judge.py   --config config/phase2_exaone_stance_minimal_en.yaml --model exaone   --split test --n 1001 --data-seed 0 --run-seed 6000   --reuse-advocacy results/advocacy/<previous>.items.json   --baseline-result results/phase2/<majority run>.json --baseline-method majority   --output-dir results/advocacy
+```
+
 ## Prompt style is an ablation, not a choice
 
 The published prompts are short: ToC's Chain-of-Explanation system prompt is 34

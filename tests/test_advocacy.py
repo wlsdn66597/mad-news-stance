@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from src.advocacy import (
     assigned_stances,
+    parse_final_verdict,
     stated_label,
     compliance,
     judge_candidates,
@@ -66,6 +67,15 @@ class AdvocatePromptTest(unittest.TestCase):
                 self.assertNotIn("gold", prompt.lower())
                 for other in set(STANCE_LABELS) - {stance}:
                     self.assertNotIn(other, prompt, f"{style}/{stance} leaked {other}")
+
+    def test_toc_judge_asks_for_discussion_before_the_verdict(self):
+        """A closing instruction that reads as "output only this line" made a
+        1.2B judge skip the discussion entirely: 841 of 1001 answers were just
+        the label."""
+        judge = PROMPT_STYLES["toc"]["judge_system"]
+        self.assertIn("strengths and weaknesses", judge)
+        self.assertIn("final sentence should include", judge)
+        self.assertNotIn("should be exactly", judge)
 
     def test_toc_style_stays_close_to_the_published_prompt_length(self):
         toc, structured = PROMPT_STYLES["toc"], PROMPT_STYLES["structured"]
@@ -230,6 +240,25 @@ class JudgeInputTest(unittest.TestCase):
         )
 
 
+class FinalVerdictTest(unittest.TestCase):
+    """ToC puts the stance value in the final sentence, after the discussion."""
+
+    def test_reads_the_closing_sentence_not_the_whole_text(self):
+        text = ("Analyst A argues supportive but overstates the framing. "
+                "Analyst B argues neutral, which ignores the headline.\n"
+                "The article is oppositional.")
+        self.assertEqual(parse_final_verdict(text), "oppositional")
+
+    def test_an_explicit_marker_still_wins(self):
+        self.assertEqual(
+            parse_final_verdict("weighing it up\nFinal stance: neutral"), "neutral"
+        )
+
+    def test_no_stance_value_anywhere(self):
+        self.assertIsNone(parse_final_verdict("I cannot decide."))
+        self.assertIsNone(parse_final_verdict(""))
+
+
 class JudgeOutputFormatTest(unittest.TestCase):
     """ToC's judge writes prose and names the label last; ours returns JSON."""
 
@@ -258,7 +287,7 @@ class JudgeOutputFormatTest(unittest.TestCase):
         self.assertEqual(result["prediction"], "oppositional")
         self.assertEqual(result["retry_count"], 1)
         repair = chat.call_args_list[1].args[2][-1]["content"]
-        self.assertIn("end with exactly this line", repair)
+        self.assertIn("strengths and weaknesses", repair)
 
     def test_structured_judge_parses_the_json_schema(self):
         output = ('{"label":"oppositional","evidence_sufficient":true,'

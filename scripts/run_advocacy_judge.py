@@ -77,6 +77,12 @@ def parse_args():
     parser.add_argument("--judge-temperature", type=float, default=0.0)
     parser.add_argument("--judge-max-new-tokens", type=int, default=384)
     parser.add_argument("--judge-max-retries", type=int, default=1)
+    parser.add_argument(
+        "--reuse-advocacy",
+        help="a previous .items.json to take the advocate cases from, so only "
+             "the judge is re-run. Isolates a judge change at a fraction of the "
+             "cost; the advocacy settings must match.",
+    )
     parser.add_argument("--baseline-result", help="saved phase2 result for a paired comparison")
     parser.add_argument("--baseline-method", default="majority")
     parser.add_argument("--limit", type=int, help="process only the first N items (smoke runs)")
@@ -199,12 +205,29 @@ def main():
     prefix_name = (
         f"advocacy_{args.model}_{split}_n{len(items)}_{profile}_d{data_seed}_s{run_seed}"
         f"_{args.prompt_style}_r{args.rounds}_ord{args.order_seed}"
+        f"{'_rejudge' if args.reuse_advocacy else ''}"
         f"_judge-{safe_name(judge_model_id.split('/')[-1])}_jt{args.judge_temperature:g}"
     )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = output_dir / prefix_name
     items_path = prefix.with_suffix(".items.json")
+
+    reused_advocacy = {}
+    if args.reuse_advocacy:
+        source_rows = json.loads(Path(args.reuse_advocacy).read_text(encoding="utf-8"))
+        reused_advocacy = {str(row["item_id"]): row for row in source_rows}
+        mismatched = [
+            key for key, row in reused_advocacy.items()
+            if row.get("rounds") != args.rounds or not row.get("advocate_cases")
+        ]
+        if mismatched:
+            raise SystemExit(
+                f"{args.reuse_advocacy} has {len(mismatched)} items whose advocacy "
+                f"does not match --rounds {args.rounds}; re-run advocacy instead"
+            )
+        print(f"[reuse] taking advocate cases for {len(reused_advocacy)} items from "
+              f"{args.reuse_advocacy}; only the judge will run", flush=True)
 
     existing = {}
     if args.resume and items_path.exists():
@@ -224,19 +247,35 @@ def main():
             rows.append(existing[key])
             continue
         record = {**item, "id": key}
-        advocacy = run_advocacy(
-            model,
-            tokenizer,
-            record,
-            order_seed=args.order_seed,
-            generation_seed=run_seed,
-            temperature=temperature,
-            max_new_tokens=max_new_tokens,
-            enable_thinking=enable_thinking,
-            rounds=args.rounds,
-            prompt_style=args.prompt_style,
-            seed_hook=lambda seed: set_seed(int(seed) % (2**32)),
-        )
+        source = reused_advocacy.get(key)
+        if source is not None:
+            advocacy = {
+                "rounds": source["rounds"],
+                "assigned_stances": source["assigned_stances"],
+                "analyses_by_round": source["analyses_by_round"],
+                "cases": source["advocate_cases"],
+                "peer_orders": source.get("peer_orders", []),
+                "cost_by_round": source["advocacy_cost"].get("by_round", []),
+                "calls": 0,
+                "latency_seconds": 0.0,
+                "token_usage": {"input_tokens": 0, "output_tokens": 0},
+            }
+        elif reused_advocacy:
+            raise SystemExit(f"item {key} is missing from {args.reuse_advocacy}")
+        else:
+            advocacy = run_advocacy(
+                model,
+                tokenizer,
+                record,
+                order_seed=args.order_seed,
+                generation_seed=run_seed,
+                temperature=temperature,
+                max_new_tokens=max_new_tokens,
+                enable_thinking=enable_thinking,
+                rounds=args.rounds,
+                prompt_style=args.prompt_style,
+                seed_hook=lambda seed: set_seed(int(seed) % (2**32)),
+            )
         cases = advocacy["cases"]
         row = {
             "item_id": key,
@@ -244,6 +283,7 @@ def main():
             "issue": item["issue"],
             "headline": item["headline"],
             "rounds": advocacy["rounds"],
+            "advocacy_source": "reused" if source is not None else "generated",
             "assigned_stances": advocacy["assigned_stances"],
             "advocate_cases": cases,
             "analyses_by_round": advocacy["analyses_by_round"],
@@ -327,6 +367,7 @@ def main():
             "advocate_temperature": temperature,
             "advocate_max_new_tokens": max_new_tokens,
             "rounds": args.rounds,
+            "reuse_advocacy": args.reuse_advocacy,
             "order_seed": args.order_seed,
             "judge_enabled": args.judge_enabled,
             "judge_temperature": args.judge_temperature,
@@ -389,6 +430,16 @@ def main():
             "judge_retries": sum(
                 max(0, len(row.get("judge_attempts") or []) - 1) for row in rows
             ),
+            # a judge that answers with the bare verdict skipped the contrastive
+            # discussion the method depends on
+            "judge_output_chars": {
+                "median": sorted(len(row.get("judge_raw_output") or "") for row in rows)[
+                    len(rows) // 2
+                ] if rows else 0,
+                "under_60_chars": sum(
+                    1 for row in rows if len(row.get("judge_raw_output") or "") < 60
+                ),
+            },
         },
         "cost": {
             "advocacy": {
@@ -479,8 +530,11 @@ def main():
     print(f"  judge: {summary['cost']['judge']['calls']} calls  "
           f"{summary['cost']['judge']['latency_seconds'] / 60:.1f}m  "
           f"retries={summary['judge_diagnostics']['judge_retries']}")
-    print(f"judge picked candidate position: "
-          f"{summary['judge_diagnostics']['winning_candidate_position']}")
+    diag = summary["judge_diagnostics"]
+    print(f"judge picked candidate position: {diag['winning_candidate_position']}")
+    print(f"judge output: median {diag['judge_output_chars']['median']} chars  "
+          f"bare verdicts (<60 chars) {diag['judge_output_chars']['under_60_chars']}/{len(rows)}"
+          f"   <- high means the judge skipped the discussion")
     c = summary["compliance"]
     print(f"fallbacks={summary['fallback_used']}  "
           f"advocates that declared a different stance="
