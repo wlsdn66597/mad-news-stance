@@ -71,12 +71,21 @@ ROUND0="$(run_pass "${common[@]}" --judge-round 0)"
 echo "=== 2/3  judge reads the last round, same settings (the paired control) ==="
 LAST="$(run_pass "${common[@]}" --judge-round last)"
 
-echo "=== 3/3  last round again, different candidate order (position bias) ==="
-ALT="$(run_pass "${common[@]}" --judge-round last --judge-order-seed "$ALT_ORDER_SEED")"
+# The position-bias pass costs as much as the round comparison and only confirms
+# a number the offline oracle already reports from saved runs. Skip it unless the
+# judge's winning position was actually non-uniform.
+alt_spec=()
+if [[ "${SKIP_ALT_ORDER:-0}" == "1" ]]; then
+  echo "=== 3/3  skipped (SKIP_ALT_ORDER=1) ==="
+else
+  echo "=== 3/3  last round again, different candidate order (position bias) ==="
+  ALT="$(run_pass "${common[@]}" --judge-round last --judge-order-seed "$ALT_ORDER_SEED")"
+  alt_spec=("${ALT}:pred=judge_last_altorder")
+fi
 
-echo "=== paired comparison across the three judge conditions ==="
+echo "=== paired comparison across the judge conditions ==="
 python scripts/compare_methods.py \
   "${ROUND0}:pred=judge_round0" \
   "${LAST}:pred=judge_last" \
-  "${ALT}:pred=judge_last_altorder" \
+  "${alt_spec[@]}" \
   ${BASELINE:+"$BASELINE:${BASELINE_METHOD:-majority}=majority"}
