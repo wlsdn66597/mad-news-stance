@@ -27,8 +27,11 @@ from transformers import set_seed
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.advocacy import (  # noqa: E402
+    cases_from_round,
     compliance,
     judge_failure_fallback,
+    position_bias_chi_square,
+    resolve_round_index,
     round_label_trajectory,
     run_advocacy,
     run_advocacy_judge,
@@ -78,10 +81,31 @@ def parse_args():
     parser.add_argument("--judge-max-new-tokens", type=int, default=384)
     parser.add_argument("--judge-max-retries", type=int, default=1)
     parser.add_argument(
+        "--judge-load-in-4bit", action=argparse.BooleanOptionalAction, default=None,
+        help="quantization for the judge; defaults to the config's load_in_4bit. "
+             "A judge-only re-run should not inherit the advocate's setting by accident.",
+    )
+    parser.add_argument(
+        "--judge-round", default="last",
+        help="which advocacy round the judge reads: 'last' (default) or a round "
+             "index. --judge-round 0 gives the judge the independent cases, "
+             "before the agents start addressing each other.",
+    )
+    parser.add_argument(
+        "--judge-order-seed", type=int, default=None,
+        help="seed for the judge's candidate shuffle only; defaults to "
+             "--order-seed. Change it alone to re-test position bias on reused "
+             "cases without touching the label assignment they were built with.",
+    )
+    parser.add_argument(
         "--reuse-advocacy",
         help="a previous .items.json to take the advocate cases from, so only "
              "the judge is re-run. Isolates a judge change at a fraction of the "
              "cost; the advocacy settings must match.",
+    )
+    parser.add_argument(
+        "--allow-reuse-mismatch", action="store_true",
+        help="downgrade the --reuse-advocacy config check to a warning",
     )
     parser.add_argument("--baseline-result", help="saved phase2 result for a paired comparison")
     parser.add_argument("--baseline-method", default="majority")
@@ -101,6 +125,65 @@ def save_json(path, value):
 
 def safe_name(value):
     return "".join(char if char.isalnum() or char in "-_" else "_" for char in str(value))
+
+
+# Everything the advocate cases depend on. --prompt-style is deliberately not
+# here: changing the judge's prompt while keeping the cases is the whole point
+# of --reuse-advocacy. It is reported instead.
+REUSE_MUST_MATCH = (
+    "config", "model", "split", "n", "data_seed", "run_seed", "order_seed",
+    "rounds", "advocate_temperature", "advocate_max_new_tokens", "limit",
+)
+
+
+def sibling_config_path(items_path: Path) -> Path:
+    name = items_path.name
+    if name.endswith(".items.json"):
+        name = name[: -len(".items.json")] + ".config.json"
+        return items_path.with_name(name)
+    return items_path.with_suffix(".config.json")
+
+
+def validate_reuse_config(args, source_path: Path):
+    """Check the saved cases were produced by the run we think they were.
+
+    Matching the round count and the presence of cases -- the previous check --
+    lets a different model, prompt style, order seed or run seed pass silently,
+    which makes a judge-only comparison unpaired without saying so.
+    """
+    config_path = sibling_config_path(source_path)
+    if not config_path.exists():
+        message = f"{source_path} has no sibling {config_path.name}; cannot verify the advocacy settings"
+        if not args.allow_reuse_mismatch:
+            raise SystemExit(message + " (pass --allow-reuse-mismatch to proceed anyway)")
+        print(f"[reuse][warn] {message}", flush=True)
+        return {}
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    mismatched, unchecked = [], []
+    for key in REUSE_MUST_MATCH:
+        mine, theirs = getattr(args, key, None), saved.get(key)
+        if mine is None or theirs is None:
+            if mine != theirs:
+                unchecked.append(f"{key}: this run {mine!r} vs saved {theirs!r}")
+            continue
+        if mine != theirs:
+            mismatched.append(f"{key}: this run {mine!r} vs saved {theirs!r}")
+    if unchecked:
+        print("[reuse][warn] resolved from the yaml config, not compared: "
+              + "; ".join(unchecked), flush=True)
+    if mismatched:
+        message = ("the saved advocacy was produced with different settings:\n  "
+                   + "\n  ".join(mismatched))
+        if not args.allow_reuse_mismatch:
+            raise SystemExit(message + "\nre-run advocacy, or pass --allow-reuse-mismatch")
+        print(f"[reuse][warn] {message}", flush=True)
+    if saved.get("prompt_style") != args.prompt_style:
+        print(f"[reuse] judge prompt style {saved.get('prompt_style')!r} -> "
+              f"{args.prompt_style!r}; the cases keep the style they were written in",
+              flush=True)
+    if saved.get("reuse_advocacy"):
+        print(f"[reuse] source was itself a re-judge of {saved['reuse_advocacy']}", flush=True)
+    return saved
 
 
 def clip(text, limit):
@@ -176,58 +259,91 @@ def main():
     if args.limit:
         items = items[: args.limit]
 
+    judge_order_seed = (
+        args.order_seed if args.judge_order_seed is None else args.judge_order_seed
+    )
+    judge_4bit = (
+        cfg["load_in_4bit"] if args.judge_load_in_4bit is None else args.judge_load_in_4bit
+    )
+
     print(
         f"[cfg] model={model_cfg['id']} split={split} n={len(items)} "
         f"data_seed={data_seed} run_seed={run_seed} temperature={temperature} "
-        f"prompt_style={args.prompt_style} rounds={args.rounds}"
+        f"prompt_style={args.prompt_style} rounds={args.rounds} "
+        f"judge_round={args.judge_round} judge_order_seed={judge_order_seed}"
     )
+
+    # --- reuse is resolved before anything touches the GPU -------------------
+    reused_advocacy = {}
+    reuse_source_config = {}
+    if args.reuse_advocacy:
+        source_path = Path(args.reuse_advocacy)
+        reuse_source_config = validate_reuse_config(args, source_path)
+        source_rows = json.loads(source_path.read_text(encoding="utf-8"))
+        reused_advocacy = {str(row["item_id"]): row for row in source_rows}
+        bad = [
+            key for key, row in reused_advocacy.items()
+            if row.get("rounds") != args.rounds
+            or not row.get("advocate_cases")
+            or len(row.get("analyses_by_round") or []) != args.rounds
+        ]
+        if bad:
+            raise SystemExit(
+                f"{args.reuse_advocacy} has {len(bad)} items whose advocacy "
+                f"does not match --rounds {args.rounds}; re-run advocacy instead"
+            )
+        missing = [str(item["id"]) for item in items if str(item["id"]) not in reused_advocacy]
+        if missing:
+            raise SystemExit(
+                f"{args.reuse_advocacy} is missing {len(missing)} of the {len(items)} "
+                f"items in this split (first: {missing[:3]}); it cannot be reused here"
+            )
+        print(f"[reuse] taking advocate cases for {len(reused_advocacy)} items from "
+              f"{args.reuse_advocacy}; the advocate model will not be loaded", flush=True)
+
     set_seed(run_seed)
-    model, tokenizer = load_model(
-        model_cfg["id"],
-        load_in_4bit=cfg["load_in_4bit"],
-        gpu_index=cfg["gpu_index"],
-        mem_fraction=cfg["mem_fraction"],
-        trust_remote_code=model_cfg.get("trust_remote_code", False),
-    )
-    if judge_model_id != model_cfg["id"]:
-        judge_model, judge_tokenizer = load_model(
-            judge_model_id,
+    # A judge-only pass has no advocate to run, so loading the advocate model
+    # only occupies VRAM and forces the judge to inherit its quantization.
+    if reused_advocacy:
+        model = tokenizer = None
+    else:
+        model, tokenizer = load_model(
+            model_cfg["id"],
             load_in_4bit=cfg["load_in_4bit"],
             gpu_index=cfg["gpu_index"],
             mem_fraction=cfg["mem_fraction"],
             trust_remote_code=model_cfg.get("trust_remote_code", False),
         )
-    else:
+    if not args.judge_enabled:
+        judge_model, judge_tokenizer = None, None
+    elif model is not None and judge_model_id == model_cfg["id"] and judge_4bit == cfg["load_in_4bit"]:
         judge_model, judge_tokenizer = model, tokenizer
-    print(f"[tokens] max_new_tokens={max_new_tokens} "
-          f"context_window={model_context_window(model, tokenizer)}")
+    else:
+        judge_model, judge_tokenizer = load_model(
+            judge_model_id,
+            load_in_4bit=judge_4bit,
+            gpu_index=cfg["gpu_index"],
+            mem_fraction=cfg["mem_fraction"],
+            trust_remote_code=model_cfg.get("trust_remote_code", False),
+        )
+    reference_model = model if model is not None else judge_model
+    reference_tokenizer = tokenizer if tokenizer is not None else judge_tokenizer
+    if reference_model is not None:
+        print(f"[tokens] max_new_tokens={max_new_tokens} "
+              f"context_window={model_context_window(reference_model, reference_tokenizer)}")
 
+    judge_round_tag = "" if str(args.judge_round) == "last" else f"_jr{args.judge_round}"
+    judge_seed_tag = "" if judge_order_seed == args.order_seed else f"_jord{judge_order_seed}"
     prefix_name = (
         f"advocacy_{args.model}_{split}_n{len(items)}_{profile}_d{data_seed}_s{run_seed}"
         f"_{args.prompt_style}_r{args.rounds}_ord{args.order_seed}"
-        f"{'_rejudge' if args.reuse_advocacy else ''}"
+        f"{'_rejudge' if args.reuse_advocacy else ''}{judge_round_tag}{judge_seed_tag}"
         f"_judge-{safe_name(judge_model_id.split('/')[-1])}_jt{args.judge_temperature:g}"
     )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = output_dir / prefix_name
     items_path = prefix.with_suffix(".items.json")
-
-    reused_advocacy = {}
-    if args.reuse_advocacy:
-        source_rows = json.loads(Path(args.reuse_advocacy).read_text(encoding="utf-8"))
-        reused_advocacy = {str(row["item_id"]): row for row in source_rows}
-        mismatched = [
-            key for key, row in reused_advocacy.items()
-            if row.get("rounds") != args.rounds or not row.get("advocate_cases")
-        ]
-        if mismatched:
-            raise SystemExit(
-                f"{args.reuse_advocacy} has {len(mismatched)} items whose advocacy "
-                f"does not match --rounds {args.rounds}; re-run advocacy instead"
-            )
-        print(f"[reuse] taking advocate cases for {len(reused_advocacy)} items from "
-              f"{args.reuse_advocacy}; only the judge will run", flush=True)
 
     existing = {}
     if args.resume and items_path.exists():
@@ -276,13 +392,18 @@ def main():
                 prompt_style=args.prompt_style,
                 seed_hook=lambda seed: set_seed(int(seed) % (2**32)),
             )
-        cases = advocacy["cases"]
+        # the judge reads one chosen round, not necessarily the last one
+        judged_round = resolve_round_index(advocacy["analyses_by_round"], args.judge_round)
+        cases = cases_from_round(
+            advocacy["analyses_by_round"], advocacy["assigned_stances"], judged_round
+        )
         row = {
             "item_id": key,
             "gold": item["gold"],
             "issue": item["issue"],
             "headline": item["headline"],
             "rounds": advocacy["rounds"],
+            "judged_round": judged_round,
             "advocacy_source": "reused" if source is not None else "generated",
             "assigned_stances": advocacy["assigned_stances"],
             "advocate_cases": cases,
@@ -305,13 +426,13 @@ def main():
             "fallback_reason": None,
         }
         if args.judge_enabled:
-            set_seed(int(stable_seed(args.order_seed, key, "advocacy_judge")) % (2**32))
+            set_seed(int(stable_seed(judge_order_seed, key, "advocacy_judge")) % (2**32))
             judged = run_advocacy_judge(
                 judge_model,
                 judge_tokenizer,
                 record,
                 cases,
-                order_seed=args.order_seed,
+                order_seed=judge_order_seed,
                 max_new_tokens=args.judge_max_new_tokens,
                 max_retries=args.judge_max_retries,
                 temperature=args.judge_temperature,
@@ -354,6 +475,16 @@ def main():
 
     preds = [row["pred"] for row in rows]
     golds = [row["gold"] for row in rows]
+    winning_positions = dict(
+        Counter(
+            next(
+                (c["candidate_id"] for c in row.get("candidate_order", [])
+                 if c["stance_argued"] == row["pred"]),
+                None,
+            )
+            for row in rows if row.get("candidate_order")
+        )
+    )
     summary = {
         "items": len(rows),
         "config": {
@@ -367,8 +498,13 @@ def main():
             "advocate_temperature": temperature,
             "advocate_max_new_tokens": max_new_tokens,
             "rounds": args.rounds,
+            "judge_round": args.judge_round,
+            "judged_round_index": rows[0].get("judged_round") if rows else None,
             "reuse_advocacy": args.reuse_advocacy,
+            "reuse_source_config": reuse_source_config or None,
             "order_seed": args.order_seed,
+            "judge_order_seed": judge_order_seed,
+            "judge_load_in_4bit": judge_4bit,
             "judge_enabled": args.judge_enabled,
             "judge_temperature": args.judge_temperature,
             "judge_max_new_tokens": args.judge_max_new_tokens,
@@ -413,19 +549,18 @@ def main():
         "judge_diagnostics": {
             # if the judge tracked candidate position rather than argument
             # quality, the winning candidate_id would not be uniform
-            "winning_candidate_position": dict(
-                Counter(
-                    next(
-                        (c["candidate_id"] for c in row.get("candidate_order", [])
-                         if c["stance_argued"] == row["pred"]),
-                        None,
-                    )
-                    for row in rows if row.get("candidate_order")
-                )
-            ),
+            "winning_candidate_position": winning_positions,
+            "winning_candidate_position_test": position_bias_chi_square(winning_positions),
+            # a label read out of malformed output is not a parsed verdict; the
+            # previous count called every prose (toc) answer a recovery
             "label_recovered_from_text": sum(
-                1 for row in rows if row.get("judge_parsed_output") is None
-                and row["pred_source"] == "judge"
+                1 for row in rows
+                if "recovered" in ((row.get("judge_attempts") or [{}])[-1].get("parse_error") or "")
+            ),
+            "judge_parse_errors": sum(
+                1 for row in rows
+                for attempt in (row.get("judge_attempts") or [])
+                if attempt.get("parse_error")
             ),
             "judge_retries": sum(
                 max(0, len(row.get("judge_attempts") or []) - 1) for row in rows
@@ -443,6 +578,9 @@ def main():
         },
         "cost": {
             "advocacy": {
+                # a judge-only pass generates nothing; by_round then describes the
+                # run the cases came from, not this one
+                "inherited_from_reuse": bool(args.reuse_advocacy),
                 "calls": sum(r["advocacy_cost"]["calls"] for r in rows),
                 "latency_seconds": sum(r["advocacy_cost"]["latency_seconds"] for r in rows),
                 "input_tokens": sum(
@@ -523,6 +661,9 @@ def main():
     print(f"wall clock={runtime['wall_clock_seconds'] / 3600:.2f}h  "
           f"generated={runtime['items_generated_this_run']}  "
           f"reused={runtime['items_reused_from_resume']}")
+    if args.reuse_advocacy:
+        print("  advocacy per-round costs below are inherited from the reused run; "
+              "this pass generated none of them")
     for block in summary["cost"]["advocacy"]["by_round"]:
         print(f"  round {block['round']}: {block['calls']} calls  "
               f"{block['latency_seconds'] / 60:.1f}m  "
@@ -531,7 +672,12 @@ def main():
           f"{summary['cost']['judge']['latency_seconds'] / 60:.1f}m  "
           f"retries={summary['judge_diagnostics']['judge_retries']}")
     diag = summary["judge_diagnostics"]
-    print(f"judge picked candidate position: {diag['winning_candidate_position']}")
+    test = diag["winning_candidate_position_test"]
+    print(f"judge picked candidate position: {diag['winning_candidate_position']}"
+          + (f"  chi2={test['chi_square']:.2f} df={test['df']} p={test['p_value']:.4f}"
+             if test.get("p_value") is not None else ""))
+    print(f"judge parse errors={diag['judge_parse_errors']}  "
+          f"labels salvaged from malformed output={diag['label_recovered_from_text']}")
     print(f"judge output: median {diag['judge_output_chars']['median']} chars  "
           f"bare verdicts (<60 chars) {diag['judge_output_chars']['under_60_chars']}/{len(rows)}"
           f"   <- high means the judge skipped the discussion")
@@ -550,6 +696,12 @@ def main():
               f"w2c={t['wrong_to_correct']} c2w={t['correct_to_wrong']} "
               f"net={t['net_improvement']:+d} "
               f"p={comparison['mcnemar_exact']['p_value_two_sided']:.3f}")
+        # a repair step keeps what the baseline got right and fixes some of what
+        # it got wrong; these two rates being equal means it is replacing the
+        # baseline rather than adjudicating it, and inverted means anti-correlated
+        print(f"   kept {t['correct_preservation_rate']:.1%} of "
+              f"{comparison['method']}'s correct answers, "
+              f"fixed {t['error_correction_rate']:.1%} of its errors")
     print(f"[saved] {prefix}.*  (items / summary / config / csv / qualitative.md)")
 
 

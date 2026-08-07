@@ -21,6 +21,7 @@ so prompt construction, parsing and routing stay importable without torch.
 from __future__ import annotations
 
 import json
+import math
 import random
 import re
 import time
@@ -55,6 +56,23 @@ def chat(*args, **kwargs):
 
 def strip_think(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
+def count_message_tokens(tokenizer, messages: Sequence[Mapping[str, Any]]) -> int | None:
+    """Tokens the model actually receives for ``messages``.
+
+    Counting only the newest user turn omits the article, the system prompt and
+    the agent's own earlier turns, so it understates every round after the first
+    by most of the prompt. Rendering the chat template is what generation itself
+    does, so it is the only count worth saving.
+    """
+    try:
+        text = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+    except Exception:
+        text = "\n".join(str(message.get("content", "")) for message in messages)
+    return count_tokens(tokenizer, text)
 
 
 STANCE_MARKER = re.compile(
@@ -136,6 +154,51 @@ def peer_order(
     return peers, order
 
 
+def resolve_round_index(analyses_by_round: Sequence[Sequence[str]], judge_round: Any = "last") -> int:
+    """Which round's cases the judge reads.
+
+    84.7% of round-1 outputs address another analyst rather than the article,
+    and the judge only ever sees the last round, so "which round" is an
+    experimental condition rather than an implementation detail.
+    """
+    total = len(analyses_by_round)
+    if total == 0:
+        raise ValueError("no advocacy rounds to judge")
+    if judge_round in (None, "last", "-1", -1):
+        return total - 1
+    index = int(judge_round)
+    if index < 0:
+        index += total
+    if not 0 <= index < total:
+        raise ValueError(f"judge round {judge_round} is outside the {total} rounds available")
+    return index
+
+
+def cases_from_round(
+    analyses_by_round: Sequence[Sequence[str]],
+    stances: Sequence[str],
+    judge_round: Any = "last",
+) -> list[dict[str, Any]]:
+    """The per-label cases as they stood at the end of ``judge_round``."""
+    round_index = resolve_round_index(analyses_by_round, judge_round)
+    analyses = analyses_by_round[round_index]
+    cases = []
+    for agent_index, stance in enumerate(stances):
+        analysis = analyses[agent_index]
+        label, source = stated_label(analysis)
+        cases.append(
+            {
+                "agent_index": agent_index,
+                "stance": stance,
+                "analysis": analysis,
+                "stated_label": label,
+                "stated_label_source": source,
+                "from_round": round_index,
+            }
+        )
+    return cases
+
+
 def run_advocacy(
     model,
     tokenizer,
@@ -183,7 +246,7 @@ def run_advocacy(
                 peer_orders.append(
                     {"round": round_index, "agent_index": agent_index, "peer_order": order}
                 )
-            round_in += count_tokens(tokenizer, contexts[agent_index][-1]["content"]) or 0
+            round_in += count_message_tokens(tokenizer, contexts[agent_index]) or 0
             agent_seed = stable_seed(
                 generation_seed, item_id, f"advocate_{round_index}_{agent_index}"
             )
@@ -217,16 +280,7 @@ def run_advocacy(
             }
         )
 
-    cases = [
-        {
-            "agent_index": agent_index,
-            "stance": stances[agent_index],
-            "analysis": analyses_by_round[-1][agent_index],
-            "stated_label": stated_label(analyses_by_round[-1][agent_index])[0],
-            "stated_label_source": stated_label(analyses_by_round[-1][agent_index])[1],
-        }
-        for agent_index in range(len(stances))
-    ]
+    cases = cases_from_round(analyses_by_round, stances)
     return {
         "prompt_style": prompt_style,
         "rounds": rounds,
@@ -320,8 +374,11 @@ def run_advocacy_judge(
     The output contract follows the prompt style: ToC's judge writes prose and
     names the label in its final line, so it is read with the same parser the
     debate methods use; our variant keeps the strict JSON schema. A JSON answer
-    that fails validation is still searched for a stance label before the item
-    is handed to the fallback, since a truncated object usually carries one.
+    that fails validation is retried first; only on the last attempt is the text
+    searched for a stance label, since a truncated object usually carries one.
+    Salvaging before the retries are spent silently accepts malformed output and
+    reports the run as clean, which is how a past run showed retries=0 while a
+    large share of its labels had never been parsed from valid JSON.
     """
     style = get_prompt_style(prompt_style)
     judge_system_prompt = style["judge_system"]
@@ -358,10 +415,11 @@ def run_advocacy_judge(
                 prediction = parsed["label"]
             except ValueError as exc:
                 parse_error = str(exc)
-                salvaged = parse_stance(raw)
-                if salvaged is not None:
-                    prediction, recovered = salvaged, True
-                    parse_error = f"{exc} (label recovered from the text)"
+                if attempt_index >= max_retries:
+                    salvaged = parse_stance(raw)
+                    if salvaged is not None:
+                        prediction, recovered = salvaged, True
+                        parse_error = f"{exc} (label recovered from the text after {max_retries} retries)"
         attempts.append(
             {
                 "attempt": attempt_index,
@@ -374,8 +432,11 @@ def run_advocacy_judge(
         )
         if prediction is not None:
             break
+        # the repair turn has to carry the article and the rationales again: a
+        # judge asked to "answer again" with only its own invalid output in the
+        # context has nothing left to judge.
         current_text = (
-            style["judge_repair"].format(invalid_output=raw)
+            style["judge_repair"].format(original_input=user_text, invalid_output=raw)
             if style["judge_repair"]
             else repair_payload(payload, raw)
         )
@@ -393,6 +454,83 @@ def run_advocacy_judge(
             "input_tokens": sum(a["input_tokens"] or 0 for a in attempts),
             "output_tokens": sum(a["output_tokens"] or 0 for a in attempts),
         },
+    }
+
+
+def run_single_advocate(
+    model,
+    tokenizer,
+    item: Mapping[str, Any],
+    stance: str,
+    temperature: float = 1.0,
+    max_new_tokens: int = 1024,
+    enable_thinking: bool | None = False,
+    prompt_style: str = "toc",
+    generation_seed: int = 0,
+    seed_hook: Callable[[int], Any] | None = None,
+) -> dict[str, Any]:
+    """One round-0 case for one label, with no peers.
+
+    Selective advocacy commissions a case only for the labels no free-form agent
+    proposed, so it needs the advocate call on its own rather than the full
+    three-agent round loop.
+    """
+    style = get_prompt_style(prompt_style)
+    messages = build_messages(
+        advocate_question(item, stance, style=prompt_style),
+        system_prompt=style["advocate_system"],
+    )
+    seed = stable_seed(generation_seed, item.get("id"), f"single_advocate_{stance}")
+    if seed_hook is not None:
+        seed_hook(seed)
+    start = time.perf_counter()
+    input_tokens = count_message_tokens(tokenizer, messages) or 0
+    reply = strip_think(
+        chat(
+            model,
+            tokenizer,
+            messages,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            enable_thinking=enable_thinking,
+        )
+    )
+    label, source = stated_label(reply)
+    return {
+        "stance": stance,
+        "analysis": reply,
+        "stated_label": label,
+        "stated_label_source": source,
+        "latency_seconds": time.perf_counter() - start,
+        "token_usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": count_tokens(tokenizer, reply) or 0,
+        },
+    }
+
+
+def position_bias_chi_square(counts: Mapping[str, int]) -> dict[str, Any]:
+    """Is the winning candidate position uniform?
+
+    Candidate order is shuffled per item, so a non-uniform winning position is
+    the judge preferring a slot rather than an artifact of the layout. With
+    three positions the test has two degrees of freedom, where the chi-square
+    survival function is exactly exp(-x/2), so no scipy dependency is needed.
+    """
+    observed = [int(value) for key, value in counts.items() if key]
+    total = sum(observed)
+    if total == 0 or len(observed) < 2:
+        return {"total": total, "chi_square": None, "df": None, "p_value": None}
+    expected = total / len(observed)
+    chi_square = sum((value - expected) ** 2 / expected for value in observed)
+    df = len(observed) - 1
+    p_value = math.exp(-chi_square / 2) if df == 2 else None
+    return {
+        "total": total,
+        "chi_square": chi_square,
+        "df": df,
+        "p_value": p_value,
+        "note": None if df == 2 else "p-value only computed for the 3-position case",
     }
 
 

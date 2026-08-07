@@ -57,6 +57,9 @@ TOC_JUDGE_ANALYSIS_TEMPLATE = "Stance: {stance} Rationale: {analysis}"
 
 TOC_JUDGE_REPAIR_TEMPLATE = """Your previous answer did not name a stance value.
 
+{original_input}
+
+Your previous answer was:
 {invalid_output}
 
 Answer again. Discuss the strengths and weaknesses of each rationale, and make

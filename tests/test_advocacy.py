@@ -4,6 +4,10 @@ from unittest.mock import patch
 
 from src.advocacy import (
     assigned_stances,
+    cases_from_round,
+    count_message_tokens,
+    position_bias_chi_square,
+    resolve_round_index,
     parse_final_verdict,
     stated_label,
     compliance,
@@ -197,6 +201,75 @@ class LabelTrajectoryTest(unittest.TestCase):
         self.assertEqual(trajectory[1]["stated_label_sources"][2], "mention")
 
 
+class JudgeRoundTest(unittest.TestCase):
+    """Which round the judge reads is a condition, not a detail: round 1 is the
+    rebuttal round, where the agents argue about each other."""
+
+    ANALYSES = [["r0 a0", "r0 a1", "r0 a2"], ["r1 a0", "r1 a1", "r1 a2"]]
+    STANCES = list(STANCE_LABELS)
+
+    def test_last_is_the_default_and_matches_the_round_loop(self):
+        self.assertEqual(resolve_round_index(self.ANALYSES), 1)
+        self.assertEqual(resolve_round_index(self.ANALYSES, "last"), 1)
+        cases = cases_from_round(self.ANALYSES, self.STANCES)
+        self.assertEqual([c["analysis"] for c in cases], self.ANALYSES[1])
+
+    def test_round_zero_gives_the_independent_cases(self):
+        cases = cases_from_round(self.ANALYSES, self.STANCES, 0)
+        self.assertEqual([c["analysis"] for c in cases], self.ANALYSES[0])
+        self.assertEqual([c["stance"] for c in cases], self.STANCES)
+        self.assertTrue(all(case["from_round"] == 0 for case in cases))
+
+    def test_a_round_that_was_never_run_is_rejected(self):
+        with self.assertRaises(ValueError):
+            resolve_round_index(self.ANALYSES, 3)
+        with self.assertRaises(ValueError):
+            resolve_round_index([])
+
+
+class TokenCountTest(unittest.TestCase):
+    class TemplateTokenizer(FakeTokenizer):
+        def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+            return " ".join(str(m["content"]) for m in messages)
+
+    def test_counts_the_whole_rendered_prompt_not_just_the_last_turn(self):
+        messages = [
+            {"role": "system", "content": "a b"},
+            {"role": "user", "content": "c d e"},
+            {"role": "assistant", "content": "f"},
+            {"role": "user", "content": "g"},
+        ]
+        self.assertEqual(count_message_tokens(self.TemplateTokenizer(), messages), 7)
+
+    def test_falls_back_to_the_concatenated_contents(self):
+        messages = [{"role": "user", "content": "x y z"}]
+        self.assertEqual(count_message_tokens(FakeTokenizer(), messages), 3)
+
+    def test_round_one_input_tokens_include_the_article(self):
+        outputs = [f"r{r} a{a}" for r in range(2) for a in range(3)]
+        with patch("src.advocacy.chat", side_effect=outputs):
+            result = run_advocacy(
+                object(), self.TemplateTokenizer(), ITEM, rounds=2, order_seed=5
+            )
+        by_round = result["cost_by_round"]
+        self.assertGreater(by_round[1]["input_tokens"], by_round[0]["input_tokens"])
+
+
+class PositionBiasTest(unittest.TestCase):
+    def test_a_uniform_split_is_not_significant(self):
+        result = position_bias_chi_square({"A": 334, "B": 334, "C": 333})
+        self.assertEqual(result["df"], 2)
+        self.assertGreater(result["p_value"], 0.05)
+
+    def test_the_measured_qwen_split_is_significant(self):
+        result = position_bias_chi_square({"A": 383, "B": 328, "C": 290})
+        self.assertAlmostEqual(result["chi_square"], 13.10, places=1)
+        self.assertLess(result["p_value"], 0.01)
+
+    def test_no_winners_at_all(self):
+        self.assertIsNone(position_bias_chi_square({})["p_value"])
+
+
 class JudgeInputTest(unittest.TestCase):
     def test_structured_payload_labels_each_analysis_with_the_stance_it_argues(self):
         cases = [case(s) for s in STANCE_LABELS]
@@ -288,6 +361,11 @@ class JudgeOutputFormatTest(unittest.TestCase):
         self.assertEqual(result["retry_count"], 1)
         repair = chat.call_args_list[1].args[2][-1]["content"]
         self.assertIn("strengths and weaknesses", repair)
+        # the retry has to carry the evidence: a judge asked to answer again
+        # with only its own invalid output has nothing left to judge
+        self.assertIn(ITEM["article"], repair)
+        for stance in STANCE_LABELS:
+            self.assertIn(f"Stance: {stance} Rationale:", repair)
 
     def test_structured_judge_parses_the_json_schema(self):
         output = ('{"label":"oppositional","evidence_sufficient":true,'
@@ -300,15 +378,46 @@ class JudgeOutputFormatTest(unittest.TestCase):
         self.assertEqual(result["output_format"], "json")
         self.assertFalse(result["label_recovered_from_text"])
 
-    def test_structured_judge_recovers_a_label_from_broken_json(self):
+    def test_structured_judge_retries_before_salvaging_a_label(self):
+        """Salvaging on the first failure marks a malformed run as clean: the
+        saved summary then reports retries=0 and fallback=0 while the label was
+        never parsed from valid JSON."""
         truncated = '{"label":"supportive","evidence_sufficient":true,"evidence":["fram'
-        with patch("src.advocacy.chat", return_value=truncated):
+        with patch("src.advocacy.chat", return_value=truncated) as chat:
             result = run_advocacy_judge(
                 object(), FakeTokenizer(), ITEM, self.cases, prompt_style="structured"
             )
+        self.assertEqual(chat.call_count, 2)
+        self.assertEqual(result["retry_count"], 1)
+        self.assertNotIn("recovered", result["attempts"][0]["parse_error"])
+        # only the final attempt is allowed to fall back to the text
         self.assertEqual(result["prediction"], "supportive")
         self.assertTrue(result["label_recovered_from_text"])
-        self.assertIn("recovered", result["attempts"][0]["parse_error"])
+        self.assertIn("recovered", result["attempts"][-1]["parse_error"])
+
+    def test_a_repaired_second_attempt_is_not_counted_as_salvaged(self):
+        outputs = [
+            '{"label":"supportive","evidence_sufficient":true,"evidence":["fram',
+            '{"label":"neutral","evidence_sufficient":true,'
+            '"evidence":["both sides"],"rationale":"balanced"}',
+        ]
+        with patch("src.advocacy.chat", side_effect=outputs):
+            result = run_advocacy_judge(
+                object(), FakeTokenizer(), ITEM, self.cases, prompt_style="structured"
+            )
+        self.assertEqual(result["prediction"], "neutral")
+        self.assertFalse(result["label_recovered_from_text"])
+
+    def test_no_retry_budget_still_salvages_on_the_only_attempt(self):
+        truncated = '{"label":"supportive","evidence_sufficient":true,"evidence":["fram'
+        with patch("src.advocacy.chat", return_value=truncated) as chat:
+            result = run_advocacy_judge(
+                object(), FakeTokenizer(), ITEM, self.cases,
+                prompt_style="structured", max_retries=0,
+            )
+        self.assertEqual(chat.call_count, 1)
+        self.assertEqual(result["prediction"], "supportive")
+        self.assertTrue(result["label_recovered_from_text"])
 
     def test_no_label_anywhere_still_fails(self):
         with patch("src.advocacy.chat", side_effect=["???", "???"]):
