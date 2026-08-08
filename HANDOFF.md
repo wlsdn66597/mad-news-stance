@@ -11,6 +11,131 @@ item-for-item, so all comparisons are exact McNemar on the same items.
 
 ---
 
+## 0. Session of 2026-08-08: the advocacy line is closed
+
+Everything in sections 1–4 below was written before this session and is kept as
+the record of how the question was reached. The experiments it proposed have now
+been run. Read this section first; it overrides several of its conclusions.
+
+### The three findings
+
+**1. The rebuttal round contaminates the cases.** Giving the judge round 0
+instead of round 1 is worth +19 items (0.4251 → 0.4044 on the 915 items where
+neither run hit a parse error, p = 0.016; +21, p = 0.015 over all 1001). The
+offline oracle says the same independently: ranking the three cases by hedging
+picks the gold case 42.4% of the time at round 0 (p = 0.0025) and 32.8% at
+round 1 (p = 0.87); quoted-passage density goes from p = 0.0053 to p = 0.84.
+Mentions of "Analyst" decide 12 items at round 0 and 815 at round 1 — the agents
+stop arguing about the article and start arguing about each other.
+
+**2. Advocacy loses to majority in every configuration.** Best case is the
+round-0 judge at 0.4366, which is still −50 against majority's 0.4865
+(p = 0.048). Judge capacity is not the bottleneck: Qwen3-8B, which demonstrably
+reasoned (0 bare verdicts, median 483 chars), scores 0.4156, below the
+EXAONE-1.2B judge that emitted a bare label 895 times out of 1001 (0.4486).
+Every judge is anti-correlated with majority rather than repairing it — the
+round-0 judge keeps 31.6% of majority's correct answers and fixes 55.1% of its
+errors.
+
+**3. The analyses have no evidential value; their whole measured effect is
+anchoring.** Selective advocacy (commission a case only where the agents split,
+174/1001 items, 0.34 generations/item) scores 0.5175 against majority's 0.4865.
+But the ablations attribute all of it to routing, not to the machinery:
+
+| condition | judge sees | acc |
+|---|---|---:|
+| `article_only` | the article | **0.5355** |
+| `article_first` | its own verdict first, then the analyses | 0.5345 |
+| `article_first --no-verify-quotes` | same, quotes untagged | 0.5345 |
+| `no_votes` | analyses, no vote count | 0.5215 |
+| `full` | analyses + origin + vote count | 0.5175 |
+| `no_commissioned` | only the analyses agents wrote | 0.5165 |
+| debate / majority | | 0.4885 / 0.4865 |
+
+Analyses shown *before* the judge forms a view cost 18 items against showing
+none (`article_only → full`, p = 0.006). Shown *after* it has already answered
+from the article, they cost nothing and change nothing: the judge revised its
+own answer on 4 of 174 items, 2 right and 2 wrong, and the tagged and untagged
+runs produced **identical predictions on all 1001 items**. Commissioning
+contributes nothing (`full → no_commissioned`, +1, p = 1.000) and neither does
+the vote count (`full → no_votes`, −4, p = 0.627).
+
+Caveat to carry: the second-turn instruction was deliberately conservative
+("change your answer only if the article itself shows you were wrong"), so some
+of that inertia is by construction. A neutral instruction would move the judge
+more — in the direction that was measured to cost 18 items.
+
+### Why, mechanically
+
+The advocates fabricate their evidence. Of 9,596 Korean-script quoted passages
+across the round-0 cases, 16.8% appear in the article exactly, 18.3% ignoring
+spacing and punctuation, and **19.3% share even their first twelve characters**
+with it. (The 2,033 Latin-script quotes verify at 0.1% and are translations, not
+inventions.) The judge has no way to tell — and when it is told, via Khan et
+al.'s verified/unverified tagging, it does not use the information.
+
+Khan et al. (ICML 2024) explain the inversion. Debate helps their judge because
+the judge **cannot see the passage** and verified quotes are its only grounding.
+Our judge reads the full article, so the analyses add no grounding and only a
+false one.
+
+### What is real: agent disagreement as a router
+
+Non-unanimity among the weak agents predicts weak-model failure. On the EXAONE
+run, agents are unanimous on 830/1001 items, split 2:1 on 162, tied on 9. On the
+174 that are not unanimous or not stable, the vote scores 0.4023 against 0.5067
+elsewhere, and handing just those to Qwen3-8B with the article alone gives
+0.5355 overall (+47 over majority, w2c 62 / c2w 15) at 0.174 extra calls per
+item. Offline routing simulation confirms the criterion rather than the budget:
+random routing of the same 174 items matched or beat it in 0.2% of 5,000 draws.
+The revision trajectory adds nothing on top of the final vote (`instability`
+alone is 42 items, random beats it 31.3% of the time; the union is worse than
+`non_unanimous` alone).
+
+### Unrelated thread, now answered: Qwen debate at 4 rounds
+
+Qwen does **not** flip. Rounds 2 and 4 both score 0.5894 against majority k=3's
+0.5994 (−10, p = 0.387 and p = 0.440). Rounds 3–4 change 90 of 1001 predictions
+with net exactly 0 — 35 each way. So round-conditionality is not a general
+property: debate beats majority only for EXAONE-1.2B and only at 4 rounds
+(+17, p = 0.027). The claim to carry is that debate's value **shrinks as the
+model improves**, not that enough rounds make it work.
+
+`majority k=12` for Qwen is still unrun (its file has only 758 shared round-0
+answers and no results). It can no longer change anything: debate r4 already
+loses to the cheaper k=3.
+
+### What is left
+
+1. **EXAONE 4-round seed repeats (6001, 6002).** The +17 is the only positive
+   result in the project, it is one seed, and its p-value is not corrected for
+   the several configurations that were looked at first.
+   `python scripts/run_phase2.py --config config/phase2_exaone_stance_minimal_en.yaml
+   --model exaone --methods majority,debate --split test --n 1001 --data-seed 0
+   --run-seed 6001 --n-rounds 4` (share_round0 gives both methods for 12
+   generations/item).
+2. Qwen `majority k=12`, for table symmetry only.
+3. The advocacy line itself: closed.
+
+### Tooling added this session
+
+| script | what, and whether it needs a GPU |
+|---|---|
+| `scripts/advocacy_oracle.py` | offline. Ranks the saved cases by surface features against gold, audits quoted passages against the article by script and by match strictness |
+| `scripts/analyze_selective_runs.py` | offline. Accuracy by trigger reason, `evidence_sufficient` gate, agreement gate, per-item ceiling over saved runs |
+| `scripts/simulate_routing.py` | offline. Substitutes a strong run's predictions on triggered items; compares against random and oracle routing at the same coverage |
+| `scripts/run_selective_advocacy.py` | GPU. `--trigger`, `--ablation`, `--stage1-from`, `--reuse-commissioned`, `--dry-run` |
+| `scripts/run_advocacy_diagnosis_queue.sh` | GPU. Round-0 vs round-1 judge passes plus the paired comparison |
+| `scripts/run_article_first_queue.sh` | GPU. The three article-first conditions, sequential |
+
+Six code defects were fixed on the way; section 3 below is the list, and all of
+them are done. Two more were found during the session: `--reuse-advocacy`
+wrongly enforced the judge's `--config`/`--model` against the advocates', and
+`--resume` silently adopted rows produced by a different judge, which
+contaminated one comparison before it was caught.
+
+---
+
 ## 1. Where the numbers stand
 
 ### Baselines (EXAONE-4.0-1.2B)
@@ -96,7 +221,7 @@ still labelled with its originally assigned stance.
 
 ---
 
-## 3. Code issues to fix (all verified in the branch)
+## 3. Code issues to fix (all verified in the branch) — ALL FIXED, see section 0
 
 1. **Structured JSON is not strict.** `run_advocacy_judge` catches a
    `parse_judge_json` failure and immediately salvages a label with
@@ -122,7 +247,7 @@ still labelled with its originally assigned stance.
 
 ---
 
-## 4. Experiments to run, in order
+## 4. Experiments to run, in order — ALL RUN, see section 0 for the results
 
 All of 1–3 reuse the saved `.items.json`, so they need **no new advocate
 generation**. Full advocacy regeneration is 7 calls/item ≈ 10.7 hours.
