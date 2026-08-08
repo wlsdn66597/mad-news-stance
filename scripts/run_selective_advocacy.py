@@ -52,6 +52,7 @@ from src.selective_advocacy import (  # noqa: E402
     independent_case,
     proposed_labels,
     run_selective_judge,
+    run_two_stage_judge,
     selective_trigger,
 )
 
@@ -78,7 +79,22 @@ def parse_args():
              "'no_votes' hides the vote count and the origin labels, and "
              "'article_only' gives the judge nothing but the article -- the "
              "control for 'this is just a stronger model on 17%% of the items'. "
-             "Only 'full' and 'no_votes' need the advocate model.")
+             "'article_first' replays a saved article_only verdict as the "
+             "judge's own first answer and then asks it to reconsider with the "
+             "analyses, so article_only is its floor rather than its rival. "
+             "Only 'full', 'no_votes' and 'article_first' need the advocate model.")
+    parser.add_argument(
+        "--stage1-from",
+        help="an --ablation article_only .items.json whose verdicts become the "
+             "first turn of --ablation article_first. Required for that "
+             "ablation: replaying keeps the two paired and costs one call per "
+             "item instead of two.")
+    parser.add_argument(
+        "--verify-quotes", action=argparse.BooleanOptionalAction, default=True,
+        help="mark each quoted passage in the analyses as present in the "
+             "article or not before the judge reads them (article_first only). "
+             "Measured on these advocates, 19%% of Korean quotes share even "
+             "their first twelve characters with the article.")
     parser.add_argument("--trigger-scope", choices=["last", "any_round"], default="last",
                         help="'last' counts only the final round's labels as proposed; "
                              "'any_round' counts a label proposed in any round")
@@ -127,7 +143,7 @@ def main():
         triggered, reason, missing = selective_trigger(rounds, args.trigger, args.trigger_scope)
         plan.append((record, triggered, reason, missing))
     triggered_count = sum(1 for _, triggered, _, _ in plan if triggered)
-    needs_commissioned = args.ablation in ("full", "no_votes")
+    needs_commissioned = args.ablation in ("full", "no_votes", "article_first")
     advocate_calls = (
         sum(len(missing) for _, triggered, _, missing in plan if triggered)
         if needs_commissioned else 0
@@ -146,12 +162,37 @@ def main():
         print(f"[plan][warn] this trigger fires on {triggered_count / len(records):.0%} of "
               f"items; it has degenerated towards --trigger all, and the vote signal "
               f"it was meant to preserve is being overridden on most items", flush=True)
+    stage1 = {}
+    if args.ablation == "article_first":
+        if not args.stage1_from:
+            raise SystemExit(
+                "--ablation article_first needs --stage1-from <article_only .items.json>; "
+                "run --ablation article_only first, then replay it here"
+            )
+        source = json.loads(Path(args.stage1_from).read_text(encoding="utf-8"))
+        stage1 = {
+            str(row["item_id"]): row for row in source
+            if row.get("triggered") and row.get("judge_raw_output")
+        }
+        missing = [str(r["id"]) for r, fires, _, _ in plan
+                   if fires and str(r["id"]) not in stage1]
+        if missing:
+            raise SystemExit(
+                f"{args.stage1_from} has no article-only verdict for {len(missing)} "
+                f"triggered items (first: {missing[:3]})"
+            )
+        print(f"[stage1] replaying {len(stage1)} article-only verdicts from "
+              f"{args.stage1_from}", flush=True)
+    elif args.stage1_from:
+        raise SystemExit("--stage1-from only applies to --ablation article_first")
+
     if args.dry_run:
         return
 
     prefix_name = (
         f"seladv_{Path(args.input_result).stem}_{args.trigger}-{args.trigger_scope}"
         f"{'' if args.ablation == 'full' else '_abl-' + args.ablation}"
+        f"{'' if args.verify_quotes or args.ablation != 'article_first' else '_untagged'}"
         f"_{args.prompt_style}_ord{args.order_seed}_s{args.run_seed}"
         f"_adv-{safe_name(advocate_model_id.split('/')[-1])}"
         f"_judge-{safe_name(judge_model_id.split('/')[-1])}_jt{args.judge_temperature:g}"
@@ -288,19 +329,26 @@ def main():
                     row["advocate_cost"]["token_usage"][field] += value
 
             set_seed(int(stable_seed(args.order_seed, key, "selective_advocacy_judge")) % (2**32))
-            judged = run_selective_judge(
-                judge_model,
-                judge_tokenizer,
-                item,
-                cases,
-                votes,
+            common = dict(
                 order_seed=args.order_seed,
                 max_new_tokens=args.judge_max_new_tokens,
                 max_retries=args.judge_max_retries,
                 temperature=args.judge_temperature,
                 enable_thinking=False,
-                ablation=args.ablation,
             )
+            if args.ablation == "article_first":
+                judged = run_two_stage_judge(
+                    judge_model, judge_tokenizer, item, cases, votes,
+                    first_pass_output=stage1[key]["judge_raw_output"],
+                    verify_quotes=args.verify_quotes, **common,
+                )
+                row["first_pass_prediction"] = judged["first_pass_prediction"]
+                row["quote_tagging"] = judged["quote_tagging"]
+            else:
+                judged = run_selective_judge(
+                    judge_model, judge_tokenizer, item, cases, votes,
+                    ablation=args.ablation, **common,
+                )
             row.update(
                 {
                     "judge_prediction": judged["prediction"],
@@ -349,6 +397,8 @@ def main():
             "trigger": args.trigger,
             "trigger_scope": args.trigger_scope,
             "ablation": args.ablation,
+            "stage1_from": args.stage1_from,
+            "verify_quotes": args.verify_quotes if args.ablation == "article_first" else None,
             "prompt_style": args.prompt_style,
             "advocate_temperature": args.advocate_temperature,
             "judge_temperature": args.judge_temperature,
@@ -409,6 +459,22 @@ def main():
                 1 for row in fired if row["correct"]
                 for c in row.get("candidate_order", [])
                 if c["stance_argued"] == row["final_prediction"] and c["origin"] == "commissioned"
+            ),
+            # did the analyses actually move the judge off its own reading?
+            "changed_from_first_pass": sum(
+                1 for row in fired if row.get("first_pass_prediction")
+                and row["first_pass_prediction"] != row["final_prediction"]
+            ),
+            "changed_from_first_pass_correct": sum(
+                1 for row in fired if row.get("first_pass_prediction")
+                and row["first_pass_prediction"] != row["final_prediction"]
+                and row["correct"]
+            ),
+            "quotes_verified": sum(
+                (row.get("quote_tagging") or {}).get("verified", 0) for row in fired
+            ),
+            "quotes_unverified": sum(
+                (row.get("quote_tagging") or {}).get("unverified", 0) for row in fired
             ),
             "labels_recovered_from_text": sum(
                 1 for row in rows

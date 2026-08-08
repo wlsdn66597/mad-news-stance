@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import time
 from collections import Counter
 from typing import Any, Mapping, Sequence
@@ -47,7 +48,39 @@ TRIGGERS = ("instability", "non_unanimous", "unstable_or_split", "missing_label"
 # rationales came from agents that chose the stance themselves and which were
 # commissioned to argue a stance nobody chose, and it is given the vote count.
 
-ABLATIONS = ("full", "no_commissioned", "no_votes", "article_only")
+ABLATIONS = ("full", "no_commissioned", "no_votes", "article_only", "article_first")
+
+QUOTE_PATTERN = re.compile(r"[\"“”'‘’「『]([^\"“”'‘’「』」]{6,200})[\"“”'‘’」』]")
+VERIFIED_MARK = " [verified: this passage appears in the article]"
+UNVERIFIED_MARK = " [unverified: this passage is not in the article]"
+
+
+def tag_quotes(text: str, article: str) -> tuple[str, int, int]:
+    """Mark each quoted passage as present in the article or not.
+
+    Khan et al. (ICML 2024) tag every debater quote verified or unverified
+    against the source and tell the judge to trust only the verified ones;
+    removing that tool is what lets an incorrect debater build a persuasive
+    false narrative. Measured here, only 19.3% of the advocates' Korean quotes
+    share even their first twelve characters with the article, so the judge is
+    currently reading mostly invented citations with no way to tell.
+
+    The check is exact substring after whitespace normalisation, which is
+    strict: a real quote loosened by a dropped particle is marked unverified.
+    """
+    article_text = " ".join(str(article or "").split())
+    verified = unverified = 0
+    out, last = [], 0
+    for match in QUOTE_PATTERN.finditer(text or ""):
+        quote = " ".join(match.group(1).split())
+        ok = bool(quote) and quote in article_text
+        verified += ok
+        unverified += not ok
+        out.append(text[last:match.end()])
+        out.append(VERIFIED_MARK if ok else UNVERIFIED_MARK)
+        last = match.end()
+    out.append((text or "")[last:])
+    return "".join(out), verified, unverified
 
 _JUDGE_HEADER = """You are an independent adjudicator for news stance classification.
 
@@ -98,7 +131,9 @@ def selective_judge_system_prompt(ablation: str = "full") -> str:
     if ablation not in ABLATIONS:
         raise ValueError(f"unknown ablation: {ablation}; choose one of {', '.join(ABLATIONS)}")
     parts = [_JUDGE_HEADER]
-    if ablation == "article_only":
+    if ablation in ("article_only", "article_first"):
+        # stage 1 of article_first is exactly the article-only condition, so the
+        # two runs start from an identical first turn and stay paired
         parts += [_JUDGE_BODY, _JUDGE_CLOSE_ARTICLE_ONLY]
         return "\n\n".join(parts)
     if ablation == "no_commissioned":
@@ -240,6 +275,8 @@ def ablate_candidates(
     """The rationales an ablation lets the judge see."""
     if ablation == "article_only":
         return []
+    if ablation == "article_first":
+        return [dict(c) for c in candidates]
     if ablation == "no_commissioned":
         return [dict(c) for c in candidates if c.get("origin") != "commissioned"]
     if ablation == "no_votes":
@@ -274,7 +311,7 @@ def judge_payload(
     }
     if ablation not in ("no_votes", "article_only"):
         payload["independent_votes"] = {label: int(votes.get(label, 0)) for label in LABELS}
-    if ablation != "article_only":
+    if ablation not in ("article_only", "article_first"):
         payload["rationales"] = ablate_candidates(candidates, ablation)
     payload["allowed_labels"] = list(LABELS)
     payload["output_schema"] = JUDGE_SCHEMA
@@ -294,6 +331,137 @@ def repair_request(payload: Mapping[str, Any], invalid_output: str) -> str:
         },
         ensure_ascii=False,
     )
+
+
+_REVISION_TASK = """You judged this article on your own above.
+
+Three analyses are now provided. Each analyst was assigned a stance in advance,
+so these are advocacy arguments, not evidence. Every quoted passage has already
+been checked against the article and marked verified or unverified; an analysis
+whose quotes are unverified has nothing behind it.
+
+Reconsider, and change your answer only if the article itself -- not the force
+of an analysis -- shows that you were wrong. Say the same label again if nothing
+here outweighs what you read.
+
+Return valid JSON only, in the same schema as before."""
+
+
+def revision_payload(
+    candidates: Sequence[Mapping[str, Any]],
+    votes: Mapping[str, int],
+    include_votes: bool = True,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"task": _REVISION_TASK}
+    if include_votes:
+        payload["independent_votes"] = {label: int(votes.get(label, 0)) for label in LABELS}
+    payload["rationales"] = list(candidates)
+    payload["allowed_labels"] = list(LABELS)
+    payload["output_schema"] = JUDGE_SCHEMA
+    return payload
+
+
+def run_two_stage_judge(
+    model,
+    tokenizer,
+    item: Mapping[str, Any],
+    cases: Sequence[Mapping[str, Any]],
+    votes: Mapping[str, int],
+    first_pass_output: str,
+    order_seed: int = 0,
+    max_new_tokens: int = 512,
+    max_retries: int = 1,
+    temperature: float = 0.0,
+    enable_thinking: bool | None = False,
+    verify_quotes: bool = True,
+) -> dict[str, Any]:
+    """Judge the article alone first, then reconsider with the analyses.
+
+    Every earlier condition showed the judge the analyses before it had formed
+    any view, so its own reading of the article was never the anchor. Here the
+    article-only verdict is the first turn -- replayed from a saved
+    ``--ablation article_only`` run, which keeps the two conditions paired and
+    costs one call per item instead of two -- and the analyses arrive as
+    something to weigh against an answer already given.
+    """
+    candidates, candidate_order = order_candidates(cases, item.get("id"), order_seed)
+    quote_stats = {"verified": 0, "unverified": 0}
+    if verify_quotes:
+        tagged = []
+        for candidate in candidates:
+            text, ok, bad = tag_quotes(candidate.get("analysis", ""), item.get("article", ""))
+            quote_stats["verified"] += ok
+            quote_stats["unverified"] += bad
+            tagged.append({**candidate, "analysis": text})
+        candidates = tagged
+    stage1 = judge_payload(item, [], votes, "article_first")
+    stage2 = revision_payload(candidates, votes)
+    messages = [
+        {"role": "system", "content": selective_judge_system_prompt("article_first")},
+        {"role": "user", "content": json.dumps(stage1, ensure_ascii=False)},
+        {"role": "assistant", "content": first_pass_output},
+    ]
+    current = json.dumps(stage2, ensure_ascii=False)
+    attempts: list[dict[str, Any]] = []
+    parsed = None
+    prediction = None
+    recovered = False
+    start = time.perf_counter()
+    for attempt_index in range(max_retries + 1):
+        raw = strip_think(
+            chat(
+                model,
+                tokenizer,
+                messages + [{"role": "user", "content": current}],
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                enable_thinking=enable_thinking,
+            )
+        )
+        parse_error = None
+        try:
+            parsed = parse_judge_json(raw)
+            prediction = parsed["label"]
+        except ValueError as exc:
+            parse_error = str(exc)
+            if attempt_index >= max_retries:
+                salvaged = parse_stance(raw)
+                if salvaged is not None:
+                    prediction, recovered = salvaged, True
+                    parse_error = f"{exc} (label recovered from the text after {max_retries} retries)"
+        attempts.append(
+            {
+                "attempt": attempt_index,
+                "raw_output": raw,
+                "parsed_output": parsed,
+                "parse_error": parse_error,
+                "input_tokens": count_message_tokens(
+                    tokenizer, messages + [{"role": "user", "content": current}]
+                ),
+                "output_tokens": count_tokens(tokenizer, raw),
+            }
+        )
+        if prediction is not None:
+            break
+        current = repair_request(stage2, raw)
+    return {
+        "prediction": prediction,
+        "parsed_output": parsed,
+        "raw_output": attempts[-1]["raw_output"] if attempts else None,
+        "attempts": attempts,
+        "retry_count": max(0, len(attempts) - 1),
+        "label_recovered_from_text": recovered,
+        "ablation": "article_first",
+        "verify_quotes": verify_quotes,
+        "quote_tagging": quote_stats if verify_quotes else None,
+        "first_pass_prediction": parse_stance(first_pass_output),
+        "candidate_order": candidate_order,
+        "latency_seconds": time.perf_counter() - start,
+        "token_usage": {
+            "input_tokens": sum(a["input_tokens"] or 0 for a in attempts),
+            "output_tokens": sum(a["output_tokens"] or 0 for a in attempts),
+        },
+    }
 
 
 def run_selective_judge(
