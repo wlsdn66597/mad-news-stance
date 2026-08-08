@@ -37,6 +37,7 @@ HEDGES = (
 )
 PEER_PATTERN = re.compile(r"analyst", re.IGNORECASE)
 HANGUL = re.compile(r"[가-힣]")
+NON_CONTENT = re.compile(r"[^0-9A-Za-z가-힣]+")
 
 
 def parse_args():
@@ -60,6 +61,17 @@ def parse_args():
 
 def normalize(text):
     return " ".join(str(text or "").split())
+
+
+def squeeze(text):
+    """Content characters only.
+
+    Exact substring matching calls a real quote fabricated as soon as a
+    particle is dropped or an ellipsis is added, which would turn loose
+    quoting into a fabrication claim. Dropping spacing and punctuation keeps
+    the distinction honest: what fails this test is not a garbled citation.
+    """
+    return NON_CONTENT.sub("", str(text or ""))
 
 
 def articles_by_id(data_path):
@@ -182,17 +194,22 @@ def analyse(path, which_round, articles=None):
         # Korean quote that is not in the article is a fabrication, an English
         # one is more likely a rendering. Only the Korean rate is evidence of
         # invention, and it is the number to report.
-        korean = {"quotes": 0, "verified": 0}
-        latin = {"quotes": 0, "verified": 0}
+        korean = {"quotes": 0, "verified": 0, "loose": 0, "prefix": 0}
+        latin = {"quotes": 0, "verified": 0, "loose": 0, "prefix": 0}
         for row in rows:
             article = articles.get(str(row["item_id"]))
             if article is None:
                 continue
+            squeezed_article = squeeze(article)
             for case in cases_of(row, which_round):
                 for quote in QUOTE_PATTERN.findall(case["analysis"] or ""):
                     bucket = korean if HANGUL.search(quote) else latin
                     bucket["quotes"] += 1
                     bucket["verified"] += normalize(quote) in article
+                    tight = squeeze(quote)
+                    bucket["loose"] += tight in squeezed_article
+                    # a real quote that was then paraphrased still starts right
+                    bucket["prefix"] += bool(tight[:12]) and tight[:12] in squeezed_article
         every = [
             features(case["analysis"], case["stance"], articles.get(str(row["item_id"])))
             for row in rows for case in cases_of(row, which_round)
@@ -213,6 +230,12 @@ def analyse(path, which_round, articles=None):
             "korean_verified": korean["verified"],
             "korean_verified_rate": (
                 korean["verified"] / korean["quotes"] if korean["quotes"] else None
+            ),
+            "korean_loose_rate": (
+                korean["loose"] / korean["quotes"] if korean["quotes"] else None
+            ),
+            "korean_prefix_rate": (
+                korean["prefix"] / korean["quotes"] if korean["quotes"] else None
             ),
             "latin_quotes": latin["quotes"],
             "latin_verified_rate": (
@@ -271,6 +294,11 @@ def main():
                   f"{grounding['cases_with_no_verified_quote']}/{grounding['cases_checked']} "
                   f"cases cite nothing real")
             if grounding.get("korean_quotes"):
+                print(f"  Korean quotes {grounding['korean_quotes']}: "
+                      f"{grounding['korean_verified_rate']:.1%} exact · "
+                      f"{grounding['korean_loose_rate']:.1%} ignoring spacing and "
+                      f"punctuation · {grounding['korean_prefix_rate']:.1%} share their "
+                      f"first 12 characters with the article")
                 print(f"  by script: Korean {grounding['korean_quotes']} quotes, "
                       f"{grounding['korean_verified_rate']:.1%} verified   |   "
                       f"Latin {grounding['latin_quotes']} quotes, "
