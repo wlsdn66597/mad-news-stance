@@ -1,6 +1,6 @@
 import unittest
 
-from src.prompts.stance import PROFILES
+from src.prompts.stance import LABEL_LINE_EN, PROFILES, get_stance_prompt_profile
 from src.tasks.stance import Stance
 
 
@@ -60,3 +60,46 @@ class StancePromptProfileTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NeutralGateProfileTest(unittest.TestCase):
+    """`stance_minimal_en` asks for one of three labels and EXAONE-4.0-1.2B then
+    recovers 25% of neutral articles while picking the right polarity on 74% of
+    the ones that do take a side. These profiles ask the same question as two
+    decisions so that the neutral call stops competing with the polarity call."""
+
+    ITEM = {
+        "issue": "김포 서울 편입",
+        "headline": "편입 논의 본격화",
+        "article": "기사 본문입니다.",
+    }
+
+    def test_both_are_registered(self):
+        for name in ("stance_twostep_en", "stance_gate_en"):
+            self.assertEqual(get_stance_prompt_profile(name).name, name)
+
+    def test_the_output_contract_is_unchanged(self):
+        """The parser and every saved comparison depend on this line, so a new
+        framing must not change how the answer is read."""
+        for name in ("stance_minimal_en", "stance_twostep_en", "stance_gate_en"):
+            profile = get_stance_prompt_profile(name)
+            for style in ("cot", "vanilla"):
+                self.assertIn(LABEL_LINE_EN, profile.question(self.ITEM, style), name)
+            self.assertIn(LABEL_LINE_EN, profile.debate_template, name)
+
+    def test_the_gate_comes_before_the_polarity(self):
+        for name in ("stance_twostep_en", "stance_gate_en"):
+            text = get_stance_prompt_profile(name).cot_instruction.lower()
+            self.assertLess(text.index("side"), text.index("oppositional"), name)
+            self.assertIn("no side", text, name)
+
+    def test_only_the_gate_variant_defines_taking_no_side(self):
+        gate = get_stance_prompt_profile("stance_gate_en").cot_instruction.lower()
+        twostep = get_stance_prompt_profile("stance_twostep_en").cot_instruction.lower()
+        self.assertIn("only reports", gate)
+        self.assertNotIn("only reports", twostep)
+
+    def test_the_article_still_reaches_the_prompt(self):
+        for name in ("stance_twostep_en", "stance_gate_en"):
+            profile = get_stance_prompt_profile(name)
+            self.assertIn(self.ITEM["article"], profile.question(self.ITEM, "cot"), name)

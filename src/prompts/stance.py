@@ -200,6 +200,93 @@ STANCE_MINIMAL_EN = StancePromptProfile(
     other_agent_template="Agent {index}:\n{answer}",
 )
 
+# ------------------------------------------------ neutral as a gate, not a class
+#
+# `stance_minimal_en` asks for one choice among three. Measured on the test
+# split, EXAONE-4.0-1.2B then recovers 90% of supportive articles and 25% of
+# neutral ones, while picking the right polarity on 74% of the articles that do
+# take a side. It can tell the sides apart; it cannot tell that an article takes
+# no side, so it falls back on the majority polarity. Perfect neutral detection
+# with its current polarity calls would move it from 0.5035 to 0.7522, more than
+# any aggregation rule or debate protocol measured here can reach.
+#
+# These two profiles ask the same question as two decisions instead of three
+# options. They are not length-matched to the 32-word baseline: `twostep` is 53
+# words and `gate` is 60, because the gate variant exists precisely to add the
+# definition of "takes no side". Length is a live confound in principle; the
+# judge-prompt sweep on this repository found 19, 32, 34 and 64 word
+# instructions within five items of each other on 1001, every pairwise p at or
+# above 0.405, which is the reason for not paying to control it here.
+
+STANCE_TWOSTEP_EN = StancePromptProfile(
+    name="stance_twostep_en",
+    language="en",
+    cot_instruction=(
+        "Answer two questions about this article, in order.\n"
+        "1. Does the article itself take a side on the issue, or does it not?\n"
+        "2. If it does, which side: supportive or oppositional?\n"
+        "Briefly explain, then answer on the final line in exactly this format "
+        "(neutral if it takes no side):\n\n"
+        + LABEL_LINE_EN
+    ),
+    vanilla_instruction=(
+        "Answer two questions about this article, in order. Does the article "
+        "itself take a side on the issue? If it does, which side: supportive or "
+        "oppositional? Answer on the final line in exactly this format (neutral "
+        "if it takes no side):\n\n"
+        + LABEL_LINE_EN
+    ),
+    debate_template=(
+        "Use the other agents' responses as additional information and reconsider, "
+        "in order: does the article take a side, and if so which one?\n"
+        "Briefly explain, then answer on the final line in exactly this format "
+        "(neutral if it takes no side):\n\n"
+        + LABEL_LINE_EN
+        + "\n\nThe other agents' judgments are as follows:\n\n{others}"
+    ),
+    instruction_first=True,
+    article_heading_en="Article",
+    other_agent_template="Agent {index}:\n{answer}",
+)
+
+# The same gate, plus the two ways an article takes no side. Without them the
+# model has to infer what "no side" means, and it resolves that by not using the
+# option.
+STANCE_GATE_EN = StancePromptProfile(
+    name="stance_gate_en",
+    language="en",
+    cot_instruction=(
+        "First: does the article's own framing argue for or against the issue? "
+        "An article that only reports what others say, or that gives both sides "
+        "comparable weight, takes no side.\n"
+        "Only if it takes a side, decide which one.\n"
+        "Briefly explain, then answer on the final line in exactly this format "
+        "(neutral if it takes no side):\n\n"
+        + LABEL_LINE_EN
+    ),
+    vanilla_instruction=(
+        "First: does the article's own framing argue for or against the issue? "
+        "An article that only reports what others say, or that gives both sides "
+        "comparable weight, takes no side. Only if it takes a side, decide which "
+        "one. Answer on the final line in exactly this format (neutral if it "
+        "takes no side):\n\n"
+        + LABEL_LINE_EN
+    ),
+    debate_template=(
+        "Use the other agents' responses as additional information and reconsider. "
+        "First, does the article's own framing argue for or against the issue, or "
+        "does it only report what others say? Only if it takes a side, decide "
+        "which one.\n"
+        "Briefly explain, then answer on the final line in exactly this format "
+        "(neutral if it takes no side):\n\n"
+        + LABEL_LINE_EN
+        + "\n\nThe other agents' judgments are as follows:\n\n{others}"
+    ),
+    instruction_first=True,
+    article_heading_en="Article",
+    other_agent_template="Agent {index}:\n{answer}",
+)
+
 STANCE_V2_KO = StancePromptProfile(
     name="stance_v2_ko",
     language="ko",
@@ -277,6 +364,8 @@ PROFILES = {
         STANCE_V2_EN,
         STANCE_V2_EN_GENERIC_MEMORY,
         STANCE_MINIMAL_EN,
+        STANCE_TWOSTEP_EN,
+        STANCE_GATE_EN,
         STANCE_V2_KO,
     )
 }
