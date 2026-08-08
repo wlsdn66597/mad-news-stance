@@ -59,6 +59,9 @@ def labels_for(paths):
             continue
         name = Path(path).name
         extra = []
+        prompt = re.search(r"_jp-([a-z_]+)_", name)
+        if prompt:
+            extra.append(prompt.group(1))
         if "_untagged" in name:
             extra.append("untagged")
         order = re.search(r"_ord(\d+)_", name)

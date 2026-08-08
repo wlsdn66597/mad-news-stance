@@ -326,7 +326,8 @@ def repair_request(payload: Mapping[str, Any], invalid_output: str) -> str:
                     "Answer the same question again, correctly. Do not invent new evidence.",
             "required_schema": JUDGE_SCHEMA,
             "allowed_labels": list(LABELS),
-            "original_input": dict(payload),
+            # the article-only variants hand over a rendered turn, not a mapping
+            "original_input": dict(payload) if isinstance(payload, Mapping) else str(payload),
             "invalid_output": invalid_output,
         },
         ensure_ascii=False,
@@ -464,6 +465,75 @@ def run_two_stage_judge(
     }
 
 
+# ------------------------------------------------- article-only judge prompts
+#
+# The published judge prompts are short -- ToC's is 82 words, MAD's 16 -- and
+# they were written for API models. This judge is an 8B running locally, and
+# every measurement so far has the shorter condition winning: 64 words 0.5355,
+# 108 words 0.5215, 145 words 0.5165, 176 words 0.5175. That ordering is
+# confounded, because the longer prompts also carried more in the payload.
+# These variants hold the payload fixed at the article and vary only the
+# instruction, so prompt length and output format can be read on their own.
+
+_BRIEF_JUDGE = """You are an expert analyst of Korean news articles.
+
+Decide the article's stance toward the issue: supportive, oppositional, or
+neutral. Judge the article's own framing, not opinions it merely quotes.
+
+Return valid JSON only."""
+
+_MINIMAL_JUDGE = """Decide the article's stance toward the issue: supportive, oppositional, or
+neutral. Briefly explain, then end with `Final stance: <label>`."""
+
+# The repository's own stance profile, i.e. exactly what the debaters are told.
+# This condition is therefore "the strong model, one sample, the debaters'
+# prompt", which is already saved as the `single` method of the Qwen run.
+_STANCE_PROFILE_JUDGE = """Classify this article's stance toward the specified issue as one of
+supportive, oppositional, or neutral.
+Briefly explain your reasoning, and answer on the final line in exactly this
+format:
+
+Final stance: <supportive|oppositional|neutral>"""
+
+ARTICLE_ONLY_PROMPTS = {
+    "adjudicator_json": {"system": None, "output": "json", "user": "json"},
+    "brief_json": {"system": _BRIEF_JUDGE, "output": "json", "user": "json"},
+    "minimal_line": {"system": _MINIMAL_JUDGE, "output": "final_line", "user": "text"},
+    "stance_profile": {"system": _STANCE_PROFILE_JUDGE, "output": "final_line",
+                       "user": "text"},
+}
+
+_TEXT_USER = """Issue: {issue}
+Headline: {headline}
+Article:
+{article}"""
+
+_LINE_REPAIR = """Your previous answer did not name a stance value.
+
+{original_input}
+
+Answer again, and end with `Final stance: <supportive|oppositional|neutral>`."""
+
+
+def article_only_turn(item, judge_prompt="adjudicator_json"):
+    """(system prompt, user text, output mode) for one article-only variant."""
+    try:
+        spec = ARTICLE_ONLY_PROMPTS[judge_prompt]
+    except KeyError:
+        choices = ", ".join(sorted(ARTICLE_ONLY_PROMPTS))
+        raise ValueError(f"unknown judge prompt {judge_prompt!r}; choose one of: {choices}")
+    system = spec["system"] or selective_judge_system_prompt("article_only")
+    if spec["user"] == "text":
+        user = _TEXT_USER.format(
+            issue=item.get("issue", ""),
+            headline=item.get("headline", ""),
+            article=item.get("article", ""),
+        )
+    else:
+        user = json.dumps(judge_payload(item, [], {}, "article_only"), ensure_ascii=False)
+    return system, user, spec["output"]
+
+
 def run_selective_judge(
     model,
     tokenizer,
@@ -476,12 +546,21 @@ def run_selective_judge(
     temperature: float = 0.0,
     enable_thinking: bool | None = False,
     ablation: str = "full",
+    judge_prompt: str = "adjudicator_json",
 ) -> dict[str, Any]:
     """Adjudicate one item. Malformed JSON is retried before anything is salvaged."""
     candidates, candidate_order = order_candidates(cases, item.get("id"), order_seed)
     payload = judge_payload(item, candidates, votes, ablation)
     system_prompt = selective_judge_system_prompt(ablation)
-    current_text = json.dumps(payload, ensure_ascii=False)
+    output_mode = "json"
+    if ablation == "article_only":
+        system_prompt, payload, output_mode = article_only_turn(item, judge_prompt)
+    elif judge_prompt != "adjudicator_json":
+        raise ValueError("judge_prompt only applies to ablation article_only")
+    current_text = payload if isinstance(payload, str) else json.dumps(
+        payload, ensure_ascii=False
+    )
+    original_text = current_text
     attempts: list[dict[str, Any]] = []
     parsed = None
     prediction = None
@@ -500,16 +579,26 @@ def run_selective_judge(
             )
         )
         parse_error = None
-        try:
-            parsed = parse_judge_json(raw)
-            prediction = parsed["label"]
-        except ValueError as exc:
-            parse_error = str(exc)
-            if attempt_index >= max_retries:
-                salvaged = parse_stance(raw)
-                if salvaged is not None:
-                    prediction, recovered = salvaged, True
-                    parse_error = f"{exc} (label recovered from the text after {max_retries} retries)"
+        if output_mode == "final_line":
+            # a prose prompt was never asked for JSON; the closing label is the
+            # verdict, read by the same parser the debate methods use
+            prediction = parse_stance(raw)
+            if prediction is None:
+                parse_error = "no stance value in the answer"
+        else:
+            try:
+                parsed = parse_judge_json(raw)
+                prediction = parsed["label"]
+            except ValueError as exc:
+                parse_error = str(exc)
+                if attempt_index >= max_retries:
+                    salvaged = parse_stance(raw)
+                    if salvaged is not None:
+                        prediction, recovered = salvaged, True
+                        parse_error = (
+                            f"{exc} (label recovered from the text after "
+                            f"{max_retries} retries)"
+                        )
         attempts.append(
             {
                 "attempt": attempt_index,
@@ -522,7 +611,11 @@ def run_selective_judge(
         )
         if prediction is not None:
             break
-        current_text = repair_request(payload, raw)
+        current_text = (
+            _LINE_REPAIR.format(original_input=original_text)
+            if output_mode == "final_line"
+            else repair_request(payload, raw)
+        )
     return {
         "prediction": prediction,
         "parsed_output": parsed,
@@ -531,6 +624,7 @@ def run_selective_judge(
         "retry_count": max(0, len(attempts) - 1),
         "label_recovered_from_text": recovered,
         "ablation": ablation,
+        "judge_prompt": judge_prompt if ablation == "article_only" else None,
         "candidate_order": candidate_order,
         "latency_seconds": time.perf_counter() - start,
         "token_usage": {

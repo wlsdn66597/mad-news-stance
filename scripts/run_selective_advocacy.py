@@ -47,6 +47,7 @@ from src.llm import load_model  # noqa: E402
 from src.prompts.advocacy import PROMPT_STYLES  # noqa: E402
 from src.selective_advocacy import (  # noqa: E402
     ABLATIONS,
+    ARTICLE_ONLY_PROMPTS,
     TRIGGERS,
     selective_judge_system_prompt,
     independent_case,
@@ -83,6 +84,15 @@ def parse_args():
              "judge's own first answer and then asks it to reconsider with the "
              "analyses, so article_only is its floor rather than its rival. "
              "Only 'full', 'no_votes' and 'article_first' need the advocate model.")
+    parser.add_argument(
+        "--judge-prompt", choices=sorted(ARTICLE_ONLY_PROMPTS), default="adjudicator_json",
+        help="--ablation article_only only. The published judge prompts are "
+             "short and were written for API models; every condition measured "
+             "here has the shorter one winning, but prompt length was confounded "
+             "with payload content. These variants hold the payload at the "
+             "article and vary only the instruction and the output format. "
+             "'stance_profile' is the debaters' own prompt, so it makes this "
+             "condition equal to one sample of the strong model.")
     parser.add_argument(
         "--stage1-from",
         help="an --ablation article_only .items.json whose verdicts become the "
@@ -211,9 +221,15 @@ def main():
     if args.dry_run:
         return
 
+    prompt_tag = (
+        f"_jp-{args.judge_prompt}"
+        if args.ablation == "article_only" and args.judge_prompt != "adjudicator_json"
+        else ""
+    )
     prefix_name = (
         f"seladv_{Path(args.input_result).stem}_{args.trigger}-{args.trigger_scope}"
         f"{'' if args.ablation == 'full' else '_abl-' + args.ablation}"
+        f"{prompt_tag}"
         f"{'' if args.verify_quotes or args.ablation != 'article_first' else '_untagged'}"
         f"_{args.prompt_style}_ord{args.order_seed}_s{args.run_seed}"
         f"_adv-{safe_name(advocate_model_id.split('/')[-1])}"
@@ -377,7 +393,7 @@ def main():
             else:
                 judged = run_selective_judge(
                     judge_model, judge_tokenizer, item, cases, votes,
-                    ablation=args.ablation, **common,
+                    ablation=args.ablation, judge_prompt=args.judge_prompt, **common,
                 )
             row.update(
                 {
@@ -427,6 +443,7 @@ def main():
             "trigger": args.trigger,
             "trigger_scope": args.trigger_scope,
             "ablation": args.ablation,
+            "judge_prompt": args.judge_prompt if args.ablation == "article_only" else None,
             "stage1_from": args.stage1_from,
             "reuse_commissioned": args.reuse_commissioned,
             "verify_quotes": args.verify_quotes if args.ablation == "article_first" else None,

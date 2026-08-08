@@ -4,6 +4,8 @@ from unittest.mock import patch
 
 from src.selective_advocacy import (
     ABLATIONS,
+    ARTICLE_ONLY_PROMPTS,
+    article_only_turn,
     independent_case,
     selective_judge_system_prompt,
     judge_payload,
@@ -257,6 +259,62 @@ class AblationTest(unittest.TestCase):
             )
         self.assertEqual(result["ablation"], "article_only")
         self.assertIn("article alone", chat.call_args_list[0].args[2][0]["content"])
+
+
+class JudgePromptTest(unittest.TestCase):
+    """The published judge prompts are short and were written for API models.
+    These variants hold the payload at the article and vary only the
+    instruction, so length and output format can be attributed separately."""
+
+    def test_every_variant_carries_the_article_and_no_gold(self):
+        for name in ARTICLE_ONLY_PROMPTS:
+            system, user, mode = article_only_turn(ITEM, name)
+            self.assertIn(ITEM["article"], user, name)
+            self.assertNotIn("gold", user, name)
+            self.assertIn(mode, ("json", "final_line"), name)
+
+    def test_the_prose_variants_never_demand_json(self):
+        for name in ("minimal_line", "stance_profile"):
+            system, user, mode = article_only_turn(ITEM, name)
+            self.assertEqual(mode, "final_line")
+            self.assertNotIn("JSON", system)
+            self.assertFalse(user.lstrip().startswith("{"))
+
+    def test_a_prose_verdict_is_read_from_the_final_line(self):
+        output = "The framing is balanced.\nFinal stance: neutral"
+        with patch("src.selective_advocacy.chat", return_value=output) as chat:
+            result = run_selective_judge(
+                object(), FakeTokenizer(), ITEM, [], {},
+                ablation="article_only", judge_prompt="minimal_line",
+            )
+        self.assertEqual(result["prediction"], "neutral")
+        self.assertEqual(result["retry_count"], 0)
+        # a prose prompt was never asked for JSON, so this is not a recovery
+        self.assertFalse(result["label_recovered_from_text"])
+        self.assertEqual(result["judge_prompt"], "minimal_line")
+        self.assertNotIn("JSON", chat.call_args_list[0].args[2][0]["content"])
+
+    def test_a_prose_answer_with_no_label_is_asked_again_with_the_article(self):
+        outputs = ["I cannot say.", "On balance.\nFinal stance: supportive"]
+        with patch("src.selective_advocacy.chat", side_effect=outputs) as chat:
+            result = run_selective_judge(
+                object(), FakeTokenizer(), ITEM, [], {},
+                ablation="article_only", judge_prompt="stance_profile",
+            )
+        repair = chat.call_args_list[1].args[2][-1]["content"]
+        self.assertIn(ITEM["article"], repair)
+        self.assertEqual(result["prediction"], "supportive")
+
+    def test_the_flag_is_rejected_outside_article_only(self):
+        with self.assertRaises(ValueError):
+            run_selective_judge(
+                object(), FakeTokenizer(), ITEM, [], {},
+                ablation="full", judge_prompt="minimal_line",
+            )
+
+    def test_unknown_prompt_is_rejected(self):
+        with self.assertRaises(ValueError):
+            article_only_turn(ITEM, "shorter")
 
 
 if __name__ == "__main__":
