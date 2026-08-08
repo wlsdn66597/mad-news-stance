@@ -282,14 +282,28 @@ items where the vote is unstable or a label is missing. The judge is given, per
 label, either the rationale of the agents that chose it *with their count* or a
 rationale marked as commissioned precisely because nobody chose it.
 
+**The trigger is the vote, not the missing label.** "Commission a case for a
+label nobody proposed" sounds selective and is not. With three agents and three
+labels a missing label is the normal case: on the EXAONE test run, 830 of 1001
+items are unanimous (two labels missing), 162 are 2:1 splits and only 9 are
+1:1:1. Triggering on a missing label fires on 99% of items and overrides the
+vote precisely where the vote is strongest. Unanimity is not accuracy — majority
+scores 0.4865 on those same items — but a commissioned counterfactual is not
+evidence against a 3:0 vote either.
+
 - `--trigger instability` — tied final round, or round 0 overturned (the
-  selective-judge trigger).
-- `--trigger missing_label` — some label was never proposed.
-- `--trigger either` (default) — the union; `all` judges everything.
+  existing selective-judge trigger). 42/1001 on the EXAONE run.
+- `--trigger non_unanimous` — a 2:1 split or a tie. 171/1001.
+- `--trigger unstable_or_split` (default) — the union. 174/1001, about
+  0.35 generations/item.
+- `--trigger missing_label` — kept as the ablation that shows why it is the
+  wrong trigger: 992/1001, 2.82 generations/item.
+- `--trigger all` — judge everything.
 - `--trigger-scope last|any_round` — whether a label proposed only in an earlier
   round counts as proposed.
 - `--dry-run` prints the trigger counts and the exact call budget without
-  loading a model. Use it before committing GPU time.
+  loading a model, and warns when the trigger fires on more than half the items.
+  Use it before committing GPU time.
 
 Cost is zero extra calls on stable items and at most (missing labels + 1) on the
 rest, against 7 per item for full two-round advocacy. Report it against
@@ -301,7 +315,7 @@ python scripts/run_selective_advocacy.py \
   --data-path data/k-news-stance_nosegment.json \
   --config config/phase2_qwen8_stance_minimal_en.yaml --model qwen \
   --advocate-model LGAI-EXAONE/EXAONE-4.0-1.2B \
-  --trigger either --dry-run
+  --trigger unstable_or_split --dry-run
 ```
 
 `judge_diagnostics.picked_commissioned` counts how often the judge went with a

@@ -31,7 +31,13 @@ from .advocacy import build_messages, chat, count_message_tokens, strip_think
 from .consensus import LABELS, normalize_label, parse_stance, stable_seed, unique_majority
 from .selective_judge import JUDGE_SCHEMA, count_tokens, parse_judge_json
 
-TRIGGERS = ("instability", "missing_label", "either", "all")
+# "a label nobody proposed" sounds selective and is not: with three agents and
+# three labels a missing label is the normal case, not the exception. Measured on
+# the EXAONE test run, 830 of 1001 items are unanimous (two labels missing) and
+# only 9 are 1:1:1, so triggering on a missing label fires on 99% of items and
+# the method degenerates into judging everything. The vote strength is the
+# selective signal: commission where the agents are split, not where they agree.
+TRIGGERS = ("instability", "non_unanimous", "unstable_or_split", "missing_label", "all")
 
 # --------------------------------------------------- selective advocacy judge
 #
@@ -78,14 +84,24 @@ def proposed_labels(round_predictions: Sequence[Sequence[Any]], scope: str = "la
 
 
 def selective_trigger(
-    round_predictions: Sequence[Sequence[Any]], mode: str = "either", scope: str = "last"
+    round_predictions: Sequence[Sequence[Any]],
+    mode: str = "unstable_or_split",
+    scope: str = "last",
 ) -> tuple[bool, str, list[str]]:
     """Should this item get commissioned cases and a judge?
 
-    ``missing`` is the set of labels no agent proposed -- the candidate-generation
-    gap the advocacy design was built for. ``instability`` is the trigger the
-    selective judge already uses: a tied final round, or a round-0 majority that
-    the final round overturned.
+    - ``instability``: a tied final round, or a round-0 majority the final round
+      overturned. The trigger the existing selective judge uses.
+    - ``non_unanimous``: the agents did not all end on the same label -- a 2:1
+      split or a tie. This is where the vote is weak enough to be worth
+      questioning.
+    - ``unstable_or_split`` (default): the union of the two.
+    - ``missing_label``: some label was never proposed. Kept for the ablation
+      that shows why it is the wrong trigger; it fires on almost everything.
+    - ``all``: judge every item.
+
+    ``missing`` is returned regardless of the mode, because it is what decides
+    how many cases have to be commissioned once an item does fire.
     """
     if mode not in TRIGGERS:
         raise ValueError(f"unknown trigger: {mode}; choose one of {', '.join(TRIGGERS)}")
@@ -96,19 +112,26 @@ def selective_trigger(
     unstable = bool(
         final.tied or (initial.label and final.label and initial.label != final.label)
     )
+    final_votes = proposed_labels(round_predictions, "last")
+    unanimous = bool(final_votes) and len(final_votes) == 1
     reasons = []
     if unstable:
         reasons.append("final_tie" if final.tied else "round0_final_disagree")
+    if not unanimous and not final.tied:
+        reasons.append("split_vote")
     if missing:
         reasons.append(f"missing:{'+'.join(missing)}")
+    joined = "+".join(reasons)
     if mode == "all":
-        return True, "all", missing
+        return True, joined or "unanimous", missing
     if mode == "instability":
-        return unstable, ("+".join(reasons) if unstable else "stable"), missing
+        return unstable, (joined if unstable else "stable"), missing
+    if mode == "non_unanimous":
+        return not unanimous, (joined if not unanimous else "unanimous"), missing
     if mode == "missing_label":
-        return bool(missing), ("+".join(reasons) if missing else "all_labels_proposed"), missing
-    triggered = unstable or bool(missing)
-    return triggered, ("+".join(reasons) if triggered else "stable_and_complete"), missing
+        return bool(missing), (joined if missing else "all_labels_proposed"), missing
+    triggered = unstable or not unanimous
+    return triggered, (joined if triggered else "unanimous_and_stable"), missing
 
 
 def independent_case(

@@ -35,13 +35,13 @@ class TriggerTest(unittest.TestCase):
             ["supportive", "oppositional", "neutral"]]
     UNANIMOUS = [["supportive"] * 3, ["supportive"] * 3]
 
-    def test_a_stable_vote_with_a_missing_label_still_fires_on_either(self):
-        triggered, reason, missing = selective_trigger(self.STABLE, "either")
+    def test_a_two_to_one_split_fires_on_the_default(self):
+        triggered, reason, missing = selective_trigger(self.STABLE)
         self.assertTrue(triggered)
         self.assertEqual(missing, ["oppositional"])
-        self.assertIn("missing:oppositional", reason)
+        self.assertIn("split_vote", reason)
 
-    def test_instability_alone_ignores_a_missing_label(self):
+    def test_instability_alone_ignores_a_stable_split(self):
         triggered, reason, _ = selective_trigger(self.STABLE, "instability")
         self.assertFalse(triggered)
         self.assertEqual(reason, "stable")
@@ -52,9 +52,29 @@ class TriggerTest(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual(reason, "final_tie")
 
-    def test_unanimity_leaves_two_labels_unargued(self):
-        _, _, missing = selective_trigger(self.UNANIMOUS, "either")
+    def test_a_unanimous_vote_is_left_alone(self):
+        """With three agents and three labels a unanimous vote always leaves two
+        labels unargued. Measured on the EXAONE test run that is 830 of 1001
+        items, so triggering on a missing label overrides the vote almost
+        everywhere -- the opposite of what this design is for."""
+        triggered, reason, missing = selective_trigger(self.UNANIMOUS)
+        self.assertFalse(triggered)
+        self.assertEqual(reason, "unanimous_and_stable")
         self.assertEqual(sorted(missing), ["neutral", "oppositional"])
+        # the ablation that shows why the missing-label trigger is wrong
+        self.assertTrue(selective_trigger(self.UNANIMOUS, "missing_label")[0])
+
+    def test_non_unanimous_covers_both_splits_and_ties(self):
+        self.assertTrue(selective_trigger(self.STABLE, "non_unanimous")[0])
+        self.assertTrue(selective_trigger(self.TIED, "non_unanimous")[0])
+        self.assertFalse(selective_trigger(self.UNANIMOUS, "non_unanimous")[0])
+
+    def test_a_unanimous_final_that_overturned_round0_still_fires(self):
+        rounds = [["neutral", "neutral", "supportive"], ["supportive"] * 3]
+        self.assertFalse(selective_trigger(rounds, "non_unanimous")[0])
+        triggered, reason, _ = selective_trigger(rounds, "unstable_or_split")
+        self.assertTrue(triggered)
+        self.assertIn("round0_final_disagree", reason)
 
     def test_scope_any_round_counts_a_label_proposed_earlier(self):
         rounds = [["oppositional", "supportive", "neutral"], ["supportive"] * 3]

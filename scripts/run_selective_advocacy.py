@@ -10,7 +10,7 @@ vote count. Nothing is regenerated for the agents that already answered.
       --data-path data/k-news-stance_nosegment.json \
       --config config/phase2_qwen8_stance_minimal_en.yaml --model qwen \
       --advocate-model LGAI-EXAONE/EXAONE-4.0-1.2B \
-      --trigger either
+      --trigger unstable_or_split
 
 The advocate and the judge can be different models: the advocate writes the
 missing counterfactual in the same voice as the debaters that produced the run,
@@ -66,7 +66,11 @@ def parse_args():
                                                  "cases; defaults to the judge model")
     parser.add_argument("--judge-model", help="defaults to the config model id")
     parser.add_argument("--aggregation-method", default="current_final_majority")
-    parser.add_argument("--trigger", choices=list(TRIGGERS), default="either")
+    parser.add_argument("--trigger", choices=list(TRIGGERS), default="unstable_or_split",
+                        help="where to spend the extra calls. The default is a "
+                             "tie, a 2:1 split or a round0/final disagreement; "
+                             "'missing_label' fires on ~99%% of items and is kept "
+                             "only as the ablation that shows why.")
     parser.add_argument("--trigger-scope", choices=["last", "any_round"], default="last",
                         help="'last' counts only the final round's labels as proposed; "
                              "'any_round' counts a label proposed in any round")
@@ -124,6 +128,12 @@ def main():
           f"full advocacy at 2 rounds is 7.00/item)", flush=True)
     print(f"[plan] trigger reasons: "
           f"{dict(Counter(reason for _, triggered, reason, _ in plan if triggered))}", flush=True)
+    # a trigger that fires on nearly everything is not selective, and the whole
+    # argument for this design is that the unanimous items keep their vote
+    if triggered_count > 0.5 * len(records):
+        print(f"[plan][warn] this trigger fires on {triggered_count / len(records):.0%} of "
+              f"items; it has degenerated towards --trigger all, and the vote signal "
+              f"it was meant to preserve is being overridden on most items", flush=True)
     if args.dry_run:
         return
 
