@@ -329,6 +329,35 @@ python scripts/run_selective_advocacy.py \
   --trigger unstable_or_split --dry-run
 ```
 
+### What the ablations found
+
+Measured, EXAONE test run, Qwen3-8B judge, identical trigger and items:
+
+| `--ablation` | acc | vs `article_only` |
+|---|---:|---|
+| `article_only` | **0.5355** | — |
+| `no_votes` | 0.5215 | −14, p = 0.044 |
+| `full` | 0.5175 | −18, p = 0.006 |
+| `no_commissioned` | 0.5165 | −19, p = 0.003 |
+| debate | 0.4885 | |
+| majority | 0.4865 | |
+
+**Showing the judge any rationale is significantly worse than showing it only
+the article.** `full` vs `no_commissioned` is net +1 (p = 1.000), so
+commissioning a counterfactual contributes nothing; `full` vs `no_votes` is net
+−4 (p = 0.627), so telling the judge the vote contributes nothing either. The
++31 over majority is entirely "hand 17.4% of the items to a stronger model with
+the article". This reproduces, much more sharply, the earlier selective-judge
+finding that an article-only judge beat a debate-trace judge.
+
+So this is a router, not a multi-agent method, and the question becomes whether
+the trigger picks the right items. `scripts/simulate_routing.py` answers that
+offline from two saved full-split runs: it substitutes the strong run's saved
+prediction on the triggered items and compares against random routing at the
+same coverage, oracle routing at the same coverage, and the strong model
+everywhere. If random routing matches the trigger, the trigger is only buying
+coverage.
+
 ### The ablations are not optional
 
 Measured on the EXAONE test run with a Qwen3-8B judge: 0.5175 against majority's
