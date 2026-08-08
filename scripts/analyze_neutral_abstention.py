@@ -125,6 +125,38 @@ def main():
             "macro_f1": macro_f1(preds, gold, LABELS), **t, **stats,
         }
 
+    # ---- is the task really two decisions? ---------------------------------
+    # "does this article take a side at all" and then "which side". A 1.2B
+    # model asked for all three at once defaults to one polarity; splitting the
+    # decision is only worth building if each half has headroom, so measure
+    # both halves of what it is already doing.
+    non_neutral = [i for i, g in enumerate(gold) if g != "neutral"]
+    said_neutral = [i for i, p in enumerate(base) if p == "neutral"]
+    hit_neutral = [i for i in said_neutral if gold[i] == "neutral"]
+    polarity_right = sum(
+        1 for i in non_neutral if base[i] == gold[i]
+    )
+    sent_to_neutral = sum(1 for i in non_neutral if base[i] == "neutral")
+    decided = len(non_neutral) - sent_to_neutral
+    print(f"\n[two-stage view]  {len(non_neutral)} articles take a side, "
+          f"{len(gold) - len(non_neutral)} do not")
+    print(f"  stage A, spotting neutral: precision "
+          f"{len(hit_neutral) / max(1, len(said_neutral)):.3f} "
+          f"({len(hit_neutral)}/{len(said_neutral)} called neutral were), recall "
+          f"{len(hit_neutral) / max(1, len(gold) - len(non_neutral)):.3f}")
+    print(f"  stage B, picking the side: {polarity_right}/{decided} = "
+          f"{polarity_right / max(1, decided):.3f} of the side-taking articles it "
+          f"did not send to neutral")
+
+    # what each half would be worth on its own
+    perfect_a = ["neutral" if g == "neutral" else p for p, g in zip(base, gold)]
+    perfect_b = [g if g != "neutral" and p != "neutral" else p
+                 for p, g in zip(base, gold)]
+    for name, preds in (("perfect stage A (neutral detection)", perfect_a),
+                        ("perfect stage B (polarity, current neutral calls)", perfect_b)):
+        correct = sum(x == y for x, y in zip(preds, gold))
+        print(f"  {name:52} {correct}/{len(gold)} = {correct / len(gold):.4f}")
+
     # what abstention could ever buy: neutral wherever the vote is wrong and
     # the gold is neutral, and never otherwise
     oracle = ["neutral" if g == "neutral" else p for p, g in zip(base, gold)]
