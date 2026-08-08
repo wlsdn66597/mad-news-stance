@@ -59,7 +59,8 @@ def labels_for(paths):
             continue
         name = Path(path).name
         extra = []
-        prompt = re.search(r"_jp-([a-z_]+)_", name)
+        # the prompt-style segment follows, so stop at it rather than swallowing it
+        prompt = re.search(r"_jp-([a-z_]+?)_(?:toc|structured)_", name)
         if prompt:
             extra.append(prompt.group(1))
         if "_untagged" in name:
