@@ -22,6 +22,13 @@ from pathlib import Path
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("specs", nargs="+", help="path:method[=label]")
+    parser.add_argument(
+        "--exclude-parse-errors", action="store_true",
+        help="drop every item on which any of the runs hit a judge parse error. "
+             "Use when the runs were produced by different judge parsing code: "
+             "those are the only items whose prediction the code change could "
+             "have moved, so the remainder is still a clean paired comparison.",
+    )
     parser.add_argument("--json", dest="json_out")
     return parser.parse_args()
 
@@ -42,18 +49,24 @@ def load(spec):
             )
         pred = {str(row["item_id"]): row[field] for row in data}
         gold = {str(row["item_id"]): row["gold"] for row in data}
+        parse_errors = {
+            str(row["item_id"]) for row in data
+            if any(a.get("parse_error") for a in (row.get("judge_attempts") or []))
+        }
     else:
         if field not in data:
             raise SystemExit(f"{path} has no '{field}' results")
         items = data[field]
         pred = {key: value["pred"] for key, value in items.items()}
         gold = {key: value["gold"] for key, value in items.items()}
+        parse_errors = set()
     return {
         "label": label or f"{field}@{Path(path).stem[-12:]}",
         "path": path,
         "method": field,
         "pred": pred,
         "gold": gold,
+        "parse_errors": parse_errors,
     }
 
 
@@ -68,7 +81,14 @@ def mcnemar(before, after, gold):
 def main():
     args = parse_args()
     runs = [load(spec) for spec in args.specs]
-    shared = sorted(set.intersection(*[set(run["pred"]) for run in runs]))
+    shared = set.intersection(*[set(run["pred"]) for run in runs])
+    if args.exclude_parse_errors:
+        flagged = set.union(*[run["parse_errors"] for run in runs])
+        dropped = shared & flagged
+        shared -= flagged
+        print(f"[filter] dropped {len(dropped)} items with a judge parse error in "
+              f"at least one run")
+    shared = sorted(shared)
     if not shared:
         raise SystemExit("the runs share no item ids")
     gold = [runs[0]["gold"][key] for key in shared]

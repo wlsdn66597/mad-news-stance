@@ -99,6 +99,17 @@ the command line are reported as unchecked, and `--allow-reuse-mismatch`
 downgrades the enforced check to a warning. Per-round advocacy costs in a rejudge summary are inherited from the
 source run (`cost.advocacy.inherited_from_reuse`), not produced by that pass.
 
+`--judge-round last` writes no filename tag, so a re-run lands on the same
+prefix as an older run of the same configuration and `--resume` would adopt its
+rows. That happened once and silently compared a fresh round-0 pass against a
+`last` pass restored from a run made before the strict-JSON fix. Resume now
+validates the sibling `.config.json` against the judge-relevant arguments and
+refuses rather than mixing two experiments in one file; use `--no-resume` or a
+different `--output-dir`. When two runs really were made by different judge
+code, `scripts/compare_methods.py --exclude-parse-errors` drops the items where
+either run hit a parse error, which are the only ones the change could have
+moved, leaving the rest a clean paired comparison.
+
 Two knobs exist for judge-only ablations:
 
 - `--judge-round 0|last` chooses which round the judge reads. 84.7% of round-1

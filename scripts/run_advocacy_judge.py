@@ -198,6 +198,47 @@ def validate_reuse_config(args, source_path: Path):
     return saved
 
 
+# Anything that changes what the judge does. Resuming across a change in any of
+# these silently mixes two experiments in one file.
+RESUME_MUST_MATCH = (
+    "prompt_style", "judge_round", "judge_order_seed", "judge_model",
+    "judge_temperature", "judge_max_new_tokens", "judge_max_retries",
+    "judge_enabled", "reuse_advocacy",
+)
+
+
+def validate_resume(args, prefix):
+    """Refuse to resume rows that a different judge produced.
+
+    `--judge-round last` writes no filename tag, so a re-run collides with an
+    older file at the same prefix and resume adopts all of its rows -- including
+    rows generated before a judge fix, which then get compared against fresh
+    rows as if they were paired. That happened: a round-0 pass under the strict
+    JSON retry was compared against a `last` pass silently restored from a run
+    that salvaged on the first failure.
+    """
+    config_path = prefix.with_suffix(".config.json")
+    if not config_path.exists():
+        raise SystemExit(
+            f"{prefix.name}.items.json exists but {config_path.name} does not, so the "
+            "saved rows cannot be attributed to a judge configuration. Pass "
+            "--no-resume, or write to a different --output-dir."
+        )
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    mismatched = [
+        f"{key}: saved {saved.get(key)!r} vs this run {getattr(args, key, None)!r}"
+        for key in RESUME_MUST_MATCH
+        if saved.get(key) != getattr(args, key, None)
+    ]
+    if mismatched:
+        raise SystemExit(
+            "the rows already at this prefix were produced by a different judge:\n  "
+            + "\n  ".join(mismatched)
+            + "\nResuming would mix two experiments in one file. Pass --no-resume to "
+              "regenerate them, or write to a different --output-dir to keep both."
+        )
+
+
 def advocate_model_from(saved_config):
     """The model that actually wrote the reused cases.
 
@@ -372,6 +413,7 @@ def main():
 
     existing = {}
     if args.resume and items_path.exists():
+        validate_resume(args, prefix)
         existing = {
             str(row["item_id"]): row
             for row in json.loads(items_path.read_text(encoding="utf-8"))
