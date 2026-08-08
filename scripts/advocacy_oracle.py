@@ -47,18 +47,53 @@ def parse_args():
              "analyses_by_round[i] instead, so round 0 and round 1 can be "
              "compared without re-running anything.",
     )
+    parser.add_argument(
+        "--data-path",
+        help="the dataset, so quoted passages can be checked against the article. "
+             "Adds verified/unverified quote features -- a quote that is not in "
+             "the article is a fabricated ground, and the judge cannot tell.",
+    )
     parser.add_argument("--json", dest="json_out")
     return parser.parse_args()
 
 
-def features(text, stance):
+def normalize(text):
+    return " ".join(str(text or "").split())
+
+
+def articles_by_id(data_path):
+    if not data_path:
+        return {}
+    rows = json.loads(Path(data_path).read_text(encoding="utf-8"))
+    return {
+        str(row["id"]): normalize(
+            f"{row.get('haedline') or row.get('headline', '')} {row.get('article', '')}"
+        )
+        for row in rows
+    }
+
+
+def features(text, stance, article=None):
     text = text or ""
     lowered = text.lower()
     label, source = stated_label(text)
-    return {
+    quotes = QUOTE_PATTERN.findall(text)
+    extra = {}
+    if article is not None:
+        # Khan et al. (ICML 2024) give their judge quotes tagged verified or
+        # unverified against the source, and removing that grounding is what
+        # lets an incorrect debater build a persuasive false narrative. Here
+        # nothing is verified, so this counts what a verifier would have caught.
+        verified = sum(1 for quote in quotes if normalize(quote) in article)
+        extra = {
+            "verified_quotes": float(verified),
+            "unverified_quotes": float(len(quotes) - verified),
+            "verified_quote_ratio": float(verified / len(quotes)) if quotes else 0.0,
+        }
+    return {**extra,
         "chars": float(len(text)),
         "words": float(len(text.split())),
-        "quoted_passages": float(len(QUOTE_PATTERN.findall(text))),
+        "quoted_passages": float(len(quotes)),
         "hedges": float(sum(lowered.count(cue) for cue in HEDGES)),
         "peer_mentions": float(len(PEER_PATTERN.findall(text))),
         # an advocate that explicitly declares a label other than the one it was
@@ -95,9 +130,10 @@ def rank_pick(scored, reverse):
     return winners[0] if len(winners) == 1 else None
 
 
-def analyse(path, which_round):
+def analyse(path, which_round, articles=None):
     rows = json.loads(Path(path).read_text(encoding="utf-8"))
-    feature_names = list(features("", "neutral"))
+    articles = articles or {}
+    feature_names = list(features("", "neutral", "" if articles else None))
     hits = {(name, direction): 0 for name in feature_names for direction in ("high", "low")}
     ties = dict.fromkeys(hits, 0)
     judge_agrees = dict.fromkeys(hits, 0)
@@ -109,7 +145,13 @@ def analyse(path, which_round):
     for row in rows:
         gold = row["gold"]
         cases = cases_of(row, which_round)
-        scored = {case["stance"]: features(case["analysis"], case["stance"]) for case in cases}
+        # an empty string, not None, when the item is missing from the dataset:
+        # the feature set must stay the same shape across items
+        article = articles.get(str(row["item_id"]), "") if articles else None
+        scored = {
+            case["stance"]: features(case["analysis"], case["stance"], article)
+            for case in cases
+        }
         if gold not in scored:
             continue
         judged += 1
@@ -132,6 +174,25 @@ def analyse(path, which_round):
                 positions[entry["candidate_id"]] += 1
 
     accuracy = sum(row["pred"] == row["gold"] for row in rows) / max(1, len(rows))
+    quote_totals = {}
+    if articles:
+        every = [
+            features(case["analysis"], case["stance"], articles.get(str(row["item_id"])))
+            for row in rows for case in cases_of(row, which_round)
+            if articles.get(str(row["item_id"])) is not None
+        ]
+        total_quotes = sum(f["verified_quotes"] + f["unverified_quotes"] for f in every)
+        quote_totals = {
+            "cases_checked": len(every),
+            "quoted_passages": total_quotes,
+            "verified": sum(f["verified_quotes"] for f in every),
+            "verified_rate": (
+                sum(f["verified_quotes"] for f in every) / total_quotes if total_quotes else None
+            ),
+            "cases_with_no_verified_quote": sum(
+                1 for f in every if f["verified_quotes"] == 0
+            ),
+        }
     predictors = []
     for (name, direction), correct in sorted(hits.items(), key=lambda kv: -kv[1]):
         decided = judged - ties[(name, direction)]
@@ -159,12 +220,14 @@ def analyse(path, which_round):
         "predictors": predictors,
         "judge_position_counts": dict(positions),
         "judge_position_test": position_bias_chi_square(dict(positions)),
+        "quote_grounding": quote_totals or None,
     }
 
 
 def main():
     args = parse_args()
-    reports = [analyse(path, args.round) for path in args.items]
+    articles = articles_by_id(args.data_path)
+    reports = [analyse(path, args.round, articles) for path in args.items]
     for report in reports:
         print(f"\n===== {Path(report['file']).name}  (round={report['round']}) =====")
         print(f"items={report['items']}  saved judge accuracy={report['saved_judge_accuracy']:.4f}")
@@ -174,6 +237,13 @@ def main():
               f"{report['gold_case_conceded']}/{report['items_with_a_gold_case']} items "
               f"({report['non_gold_cases_conceded']} concessions among the "
               f"{2 * report['items_with_a_gold_case']} non-gold cases)")
+        grounding = report.get("quote_grounding")
+        if grounding and grounding["quoted_passages"]:
+            print(f"quoted passages: {int(grounding['quoted_passages'])} across "
+                  f"{grounding['cases_checked']} cases · "
+                  f"{grounding['verified_rate']:.1%} actually appear in the article · "
+                  f"{grounding['cases_with_no_verified_quote']}/{grounding['cases_checked']} "
+                  f"cases cite nothing real")
         print("\nranking the three cases by one surface feature; chance = 0.3333")
         print(f"  {'feature':16} {'dir':5} {'decided':>7} {'acc':>7} {'p':>8} {'judge agrees':>13}")
         for row in report["predictors"]:

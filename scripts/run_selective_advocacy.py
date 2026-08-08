@@ -279,9 +279,9 @@ def main():
                         "stated_label_source": commissioned["stated_label_source"],
                     }
                 )
-                row["commissioned_cases"].append(
-                    {k: v for k, v in commissioned.items() if k != "analysis"}
-                )
+                # keep the text: without it a saved run cannot be audited for
+                # what the judge was actually shown
+                row["commissioned_cases"].append(dict(commissioned))
                 row["advocate_cost"]["calls"] += 1
                 row["advocate_cost"]["latency_seconds"] += commissioned["latency_seconds"]
                 for field, value in commissioned["token_usage"].items():
