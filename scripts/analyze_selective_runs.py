@@ -20,6 +20,7 @@ aggregate hides:
 """
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -36,12 +37,35 @@ def parse_args():
     return parser.parse_args()
 
 
-def label_of(path):
+def base_label(path):
     name = Path(path).name
     for tag in ("article_only", "no_commissioned", "no_votes", "article_first"):
         if f"abl-{tag}" in name:
             return tag
     return "full"
+
+
+def labels_for(paths):
+    """One readable label per file, disambiguated only where it has to be.
+
+    The article-first ablations differ by quote tagging and by candidate order,
+    not by ablation name, so several files legitimately share a base label.
+    """
+    bases = [base_label(path) for path in paths]
+    labels = []
+    for path, base in zip(paths, bases):
+        if bases.count(base) == 1:
+            labels.append(base)
+            continue
+        name = Path(path).name
+        extra = []
+        if "_untagged" in name:
+            extra.append("untagged")
+        order = re.search(r"_ord(\d+)_", name)
+        if order:
+            extra.append(f"ord{order.group(1)}")
+        labels.append("+".join([base] + extra) if extra else base)
+    return labels
 
 
 def subgroup(reason):
@@ -69,9 +93,13 @@ def accuracy(rows, pick):
 
 def main():
     args = parse_args()
-    runs = {label_of(path): load(path) for path in args.items}
+    labels = labels_for(args.items)
+    runs = {label: load(path) for label, path in zip(labels, args.items)}
     if len(runs) != len(args.items):
-        raise SystemExit("two inputs resolved to the same ablation label")
+        duplicates = sorted({label for label in labels if labels.count(label) > 1})
+        raise SystemExit(
+            f"these inputs cannot be told apart by filename: {', '.join(duplicates)}"
+        )
     first = next(iter(runs.values()))
     shared = sorted(set.intersection(*[set(rows) for rows in runs.values()]))
     all_rows = [first[key] for key in shared]
@@ -91,7 +119,7 @@ def main():
     # ---- overall, and on the triggered subset only -------------------------
     print(f"\n{'ablation':18} {'overall':>9} {'on triggered':>13} "
           f"{'w2c':>5} {'c2w':>5} {'net':>5}")
-    print(f"  {'(the vote alone)':16} {base_correct / len(shared):9.4f} "
+    print(f"  {'(the vote alone)':28} {base_correct / len(shared):9.4f} "
           f"{sum(baseline[k] == gold[k] for k in fired) / max(1, len(fired)):13.4f}")
     for label, rows in runs.items():
         correct, acc = accuracy([rows[k] for k in shared], lambda r: r["final_prediction"])
@@ -100,7 +128,7 @@ def main():
                   if baseline[k] != gold[k] and rows[k]["final_prediction"] == gold[k])
         c2w = sum(1 for k in fired
                   if baseline[k] == gold[k] and rows[k]["final_prediction"] != gold[k])
-        print(f"  {label:16} {acc:9.4f} {fired_correct / max(1, len(fired)):13.4f} "
+        print(f"  {label:28} {acc:9.4f} {fired_correct / max(1, len(fired)):13.4f} "
               f"{w2c:5d} {c2w:5d} {w2c - c2w:+5d}")
         report["runs"][label] = {"overall_accuracy": acc, "wrong_to_correct": w2c,
                                  "correct_to_wrong": c2w}
@@ -110,12 +138,12 @@ def main():
     for key in fired:
         groups.setdefault(subgroup(first[key]["trigger_reason"]), []).append(key)
     print(f"\n[by trigger reason]  vote -> each ablation, accuracy on that subgroup")
-    header = "  ".join(f"{label:>16}" for label in runs)
+    header = "  ".join(f"{label:>22}" for label in runs)
     print(f"  {'subgroup':24} {'n':>4} {'vote':>6}  {header}")
     for name, keys in sorted(groups.items(), key=lambda kv: -len(kv[1])):
         vote = sum(baseline[k] == gold[k] for k in keys) / len(keys)
         cells = "  ".join(
-            f"{sum(rows[k]['final_prediction'] == gold[k] for k in keys) / len(keys):16.4f}"
+            f"{sum(rows[k]['final_prediction'] == gold[k] for k in keys) / len(keys):22.4f}"
             for rows in runs.values()
         )
         print(f"  {name:24} {len(keys):4d} {vote:6.4f}  {cells}")
@@ -140,7 +168,7 @@ def main():
             [gated(rows[k]) for k in shared],
             [gold[k] for k in shared],
         )
-        print(f"  {label:18} thin={thin:4d}  {plain / len(shared):.4f} -> {acc:.4f}  "
+        print(f"  {label:28} thin={thin:4d}  {plain / len(shared):.4f} -> {acc:.4f}  "
               f"({correct - plain:+d}, p={stats['p_value_two_sided']:.3f})")
         report["runs"][label]["evidence_gate"] = {"thin": thin, "accuracy": acc}
 
