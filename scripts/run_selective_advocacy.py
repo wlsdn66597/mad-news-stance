@@ -46,8 +46,9 @@ from src.consensus_io import load_consensus_records  # noqa: E402
 from src.llm import load_model  # noqa: E402
 from src.prompts.advocacy import PROMPT_STYLES  # noqa: E402
 from src.selective_advocacy import (  # noqa: E402
-    SELECTIVE_JUDGE_SYSTEM_PROMPT,
+    ABLATIONS,
     TRIGGERS,
+    selective_judge_system_prompt,
     independent_case,
     proposed_labels,
     run_selective_judge,
@@ -71,6 +72,13 @@ def parse_args():
                              "tie, a 2:1 split or a round0/final disagreement; "
                              "'missing_label' fires on ~99%% of items and is kept "
                              "only as the ablation that shows why.")
+    parser.add_argument(
+        "--ablation", choices=list(ABLATIONS), default="full",
+        help="'full' is the method. 'no_commissioned' drops the counterfactuals, "
+             "'no_votes' hides the vote count and the origin labels, and "
+             "'article_only' gives the judge nothing but the article -- the "
+             "control for 'this is just a stronger model on 17%% of the items'. "
+             "Only 'full' and 'no_votes' need the advocate model.")
     parser.add_argument("--trigger-scope", choices=["last", "any_round"], default="last",
                         help="'last' counts only the final round's labels as proposed; "
                              "'any_round' counts a label proposed in any round")
@@ -119,7 +127,11 @@ def main():
         triggered, reason, missing = selective_trigger(rounds, args.trigger, args.trigger_scope)
         plan.append((record, triggered, reason, missing))
     triggered_count = sum(1 for _, triggered, _, _ in plan if triggered)
-    advocate_calls = sum(len(missing) for _, triggered, _, missing in plan if triggered)
+    needs_commissioned = args.ablation in ("full", "no_votes")
+    advocate_calls = (
+        sum(len(missing) for _, triggered, _, missing in plan if triggered)
+        if needs_commissioned else 0
+    )
     print(f"[plan] {len(records)} items · triggered {triggered_count} "
           f"({triggered_count / max(1, len(records)):.1%}) · "
           f"{advocate_calls} commissioned advocate calls + {triggered_count} judge calls "
@@ -139,6 +151,7 @@ def main():
 
     prefix_name = (
         f"seladv_{Path(args.input_result).stem}_{args.trigger}-{args.trigger_scope}"
+        f"{'' if args.ablation == 'full' else '_abl-' + args.ablation}"
         f"_{args.prompt_style}_ord{args.order_seed}_s{args.run_seed}"
         f"_adv-{safe_name(advocate_model_id.split('/')[-1])}"
         f"_judge-{safe_name(judge_model_id.split('/')[-1])}_jt{args.judge_temperature:g}"
@@ -163,6 +176,7 @@ def main():
         if triggered and str(record["id"]) not in existing
     ]
     needs_models = args.judge_enabled and bool(outstanding)
+    needs_advocate = needs_models and needs_commissioned
     judge_model = judge_tokenizer = advocate_model = advocate_tokenizer = None
     if needs_models:
         judge_model, judge_tokenizer = load_model(
@@ -172,7 +186,10 @@ def main():
             mem_fraction=cfg["mem_fraction"],
             trust_remote_code=model_cfg.get("trust_remote_code", False),
         )
-        if advocate_model_id == judge_model_id:
+        if not needs_advocate:
+            print(f"[cfg] --ablation {args.ablation} shows the judge no commissioned "
+                  f"case, so the advocate model is not loaded", flush=True)
+        elif advocate_model_id == judge_model_id:
             advocate_model, advocate_tokenizer = judge_model, judge_tokenizer
         else:
             advocate_model, advocate_tokenizer = load_model(
@@ -237,6 +254,8 @@ def main():
                 if found is not None:
                     cases.append(found)
                     continue
+                if not needs_commissioned:
+                    continue
                 commissioned = run_single_advocate(
                     advocate_model,
                     advocate_tokenizer,
@@ -280,6 +299,7 @@ def main():
                 max_retries=args.judge_max_retries,
                 temperature=args.judge_temperature,
                 enable_thinking=False,
+                ablation=args.ablation,
             )
             row.update(
                 {
@@ -328,12 +348,13 @@ def main():
             "aggregation_method": args.aggregation_method,
             "trigger": args.trigger,
             "trigger_scope": args.trigger_scope,
+            "ablation": args.ablation,
             "prompt_style": args.prompt_style,
             "advocate_temperature": args.advocate_temperature,
             "judge_temperature": args.judge_temperature,
             "order_seed": args.order_seed,
             "run_seed": args.run_seed,
-            "judge_system_prompt": SELECTIVE_JUDGE_SYSTEM_PROMPT,
+            "judge_system_prompt": selective_judge_system_prompt(args.ablation),
             "gold_available_to_agents_or_judge": False,
         },
         "runtime": {

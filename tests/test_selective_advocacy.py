@@ -3,7 +3,9 @@ import unittest
 from unittest.mock import patch
 
 from src.selective_advocacy import (
+    ABLATIONS,
     independent_case,
+    selective_judge_system_prompt,
     judge_payload,
     order_candidates,
     proposed_labels,
@@ -187,6 +189,74 @@ class SelectiveJudgeTest(unittest.TestCase):
         self.assertIn("independent", system_prompt)
         user_text = chat.call_args_list[0].args[2][-1]["content"]
         self.assertIn('"origin": "commissioned"', user_text)
+
+
+class AblationTest(unittest.TestCase):
+    """Each ablation removes one thing, and the prompt has to remove it too --
+    otherwise the run measures the instruction rather than the input."""
+
+    CASES = [
+        {"stance": "supportive", "origin": "independent",
+         "independent_supporters": 2, "analysis": "a"},
+        {"stance": "oppositional", "origin": "commissioned",
+         "independent_supporters": 0, "analysis": "b"},
+    ]
+    VOTES = {"supportive": 2, "oppositional": 0, "neutral": 0}
+
+    def payload(self, ablation):
+        candidates, _ = order_candidates(self.CASES, "42", 7)
+        return judge_payload(ITEM, candidates, self.VOTES, ablation)
+
+    def test_full_keeps_everything(self):
+        payload = self.payload("full")
+        self.assertEqual(len(payload["rationales"]), 2)
+        self.assertIn("independent_votes", payload)
+        self.assertIn("commissioned", selective_judge_system_prompt("full"))
+
+    def test_no_commissioned_drops_the_counterfactual_and_its_paragraph(self):
+        payload = self.payload("no_commissioned")
+        self.assertEqual([r["stance"] for r in payload["rationales"]], ["supportive"])
+        self.assertIn("independent_votes", payload)
+        self.assertNotIn("commissioned", selective_judge_system_prompt("no_commissioned"))
+
+    def test_no_votes_keeps_the_rationales_but_hides_the_count_and_origin(self):
+        payload = self.payload("no_votes")
+        self.assertEqual(len(payload["rationales"]), 2)
+        self.assertNotIn("independent_votes", payload)
+        for rationale in payload["rationales"]:
+            self.assertNotIn("origin", rationale)
+            self.assertNotIn("independent_supporters", rationale)
+        prompt = selective_judge_system_prompt("no_votes")
+        self.assertNotIn("independent majority", prompt)
+
+    def test_article_only_is_the_stronger_model_control(self):
+        payload = self.payload("article_only")
+        self.assertNotIn("rationales", payload)
+        self.assertNotIn("independent_votes", payload)
+        self.assertIn(ITEM["article"], json.dumps(payload, ensure_ascii=False))
+        prompt = selective_judge_system_prompt("article_only")
+        self.assertIn("article alone", prompt)
+        self.assertNotIn("rationale", prompt)
+
+    def test_no_ablation_leaks_the_gold(self):
+        for ablation in ABLATIONS:
+            encoded = json.dumps(self.payload(ablation), ensure_ascii=False)
+            self.assertNotIn("gold", encoded, ablation)
+
+    def test_unknown_ablation_is_rejected(self):
+        with self.assertRaises(ValueError):
+            selective_judge_system_prompt("none")
+        with self.assertRaises(ValueError):
+            self.payload("none")
+
+    def test_the_judge_uses_the_matching_prompt(self):
+        with patch("src.selective_advocacy.chat", return_value="?") as chat:
+            result = run_selective_judge(
+                object(), FakeTokenizer(), ITEM, self.CASES, self.VOTES,
+                ablation="article_only",
+            )
+        self.assertEqual(result["ablation"], "article_only")
+        self.assertIn("article alone", chat.call_args_list[0].args[2][0]["content"])
 
 
 if __name__ == "__main__":

@@ -47,29 +47,74 @@ TRIGGERS = ("instability", "non_unanimous", "unstable_or_split", "missing_label"
 # rationales came from agents that chose the stance themselves and which were
 # commissioned to argue a stance nobody chose, and it is given the vote count.
 
-SELECTIVE_JUDGE_SYSTEM_PROMPT = """You are an independent adjudicator for news stance classification.
+ABLATIONS = ("full", "no_commissioned", "no_votes", "article_only")
+
+_JUDGE_HEADER = """You are an independent adjudicator for news stance classification.
 
 Determine the article's stance toward the specified issue as supportive,
-oppositional, or neutral.
+oppositional, or neutral."""
 
-Each rationale is marked with its origin. An "independent" rationale was written
+_ORIGINS_BOTH = """Each rationale is marked with its origin. An "independent" rationale was written
 by an analyst who reached that stance on its own; the number of analysts who did
 so is given and is genuine evidence. A "commissioned" rationale was written by an
 analyst that was told in advance to argue that stance, whether or not the article
 supports it; it is advocacy, not evidence, and exists only so that no stance goes
-unargued.
+unargued."""
 
-Verify every claimed passage against the original article. Judge the stance
-expressed by the article's framing, wording, emphasis, and narrative structure,
-and distinguish the journalist's framing from opinions merely quoted from
-governments, organizations, or individuals.
+_ORIGINS_INDEPENDENT = """Each rationale was written by an analyst who reached that stance on its own, and
+the number of analysts who did so is given. Stances no analyst chose have no
+rationale, which is itself informative rather than a gap to be filled."""
 
-Overturn the independent majority only when the article itself, not the force of
-a rationale, contradicts it. Do not infer the answer from the order in which the
-rationales appear. Return one of the three labels even when all rationales are
-flawed.
+_ORIGINS_UNLABELLED = """Rationales are provided for some or all of the stances. Treat them as claims to
+be checked, not as evidence in themselves."""
+
+_VERIFY = """Verify every claimed passage against the original article."""
+
+_JUDGE_BODY = """Judge the stance expressed by the article's framing, wording, emphasis, and
+narrative structure, and distinguish the journalist's framing from opinions
+merely quoted from governments, organizations, or individuals."""
+
+_DEFER_TO_VOTE = """Overturn the independent majority only when the article itself, not the force of
+a rationale, contradicts it."""
+
+_JUDGE_CLOSE_WITH_RATIONALES = """Do not infer the answer from the order in which the rationales appear. Return one
+of the three labels even when all rationales are flawed.
 
 Return valid JSON only."""
+
+_JUDGE_CLOSE_ARTICLE_ONLY = """Decide from the article alone. Return one of the three labels.
+
+Return valid JSON only."""
+
+
+def selective_judge_system_prompt(ablation: str = "full") -> str:
+    """The judge instruction for one ablation.
+
+    The prompt has to match the payload: telling a judge that some rationales
+    are commissioned advocacy when none are, or asking it not to be swayed by
+    rationale order when it is given no rationales, would make the ablation
+    measure the prompt rather than the input.
+    """
+    if ablation not in ABLATIONS:
+        raise ValueError(f"unknown ablation: {ablation}; choose one of {', '.join(ABLATIONS)}")
+    parts = [_JUDGE_HEADER]
+    if ablation == "article_only":
+        parts += [_JUDGE_BODY, _JUDGE_CLOSE_ARTICLE_ONLY]
+        return "\n\n".join(parts)
+    if ablation == "no_commissioned":
+        parts.append(_ORIGINS_INDEPENDENT)
+    elif ablation == "no_votes":
+        parts.append(_ORIGINS_UNLABELLED)
+    else:
+        parts.append(_ORIGINS_BOTH)
+    parts += [_VERIFY, _JUDGE_BODY]
+    if ablation != "no_votes":
+        parts.append(_DEFER_TO_VOTE)
+    parts.append(_JUDGE_CLOSE_WITH_RATIONALES)
+    return "\n\n".join(parts)
+
+
+SELECTIVE_JUDGE_SYSTEM_PROMPT = selective_judge_system_prompt("full")
 
 
 def proposed_labels(round_predictions: Sequence[Sequence[Any]], scope: str = "last") -> Counter:
@@ -189,20 +234,51 @@ def order_candidates(
     return candidates, order
 
 
+def ablate_candidates(
+    candidates: Sequence[Mapping[str, Any]], ablation: str = "full"
+) -> list[dict[str, Any]]:
+    """The rationales an ablation lets the judge see."""
+    if ablation == "article_only":
+        return []
+    if ablation == "no_commissioned":
+        return [dict(c) for c in candidates if c.get("origin") != "commissioned"]
+    if ablation == "no_votes":
+        # the rationales stay, the provenance and the count go
+        return [
+            {k: v for k, v in c.items() if k not in ("origin", "independent_supporters")}
+            for c in candidates
+        ]
+    return [dict(c) for c in candidates]
+
+
 def judge_payload(
     item: Mapping[str, Any],
     candidates: Sequence[Mapping[str, Any]],
     votes: Mapping[str, int],
+    ablation: str = "full",
 ) -> dict[str, Any]:
-    return {
+    """The judge input for one ablation.
+
+    ``full`` is the method. The others isolate what it is actually buying:
+    ``no_commissioned`` removes the counterfactuals and leaves the free-form
+    rationales, ``no_votes`` removes the vote count and the origin labels, and
+    ``article_only`` removes the rationales entirely -- that last one is the
+    control for "this is just a stronger model applied to 17% of the items".
+    """
+    if ablation not in ABLATIONS:
+        raise ValueError(f"unknown ablation: {ablation}; choose one of {', '.join(ABLATIONS)}")
+    payload = {
         "issue": item.get("issue", ""),
         "headline": item.get("headline", ""),
         "article": item.get("article", ""),
-        "independent_votes": {label: int(votes.get(label, 0)) for label in LABELS},
-        "rationales": list(candidates),
-        "allowed_labels": list(LABELS),
-        "output_schema": JUDGE_SCHEMA,
     }
+    if ablation not in ("no_votes", "article_only"):
+        payload["independent_votes"] = {label: int(votes.get(label, 0)) for label in LABELS}
+    if ablation != "article_only":
+        payload["rationales"] = ablate_candidates(candidates, ablation)
+    payload["allowed_labels"] = list(LABELS)
+    payload["output_schema"] = JUDGE_SCHEMA
+    return payload
 
 
 def repair_request(payload: Mapping[str, Any], invalid_output: str) -> str:
@@ -231,10 +307,12 @@ def run_selective_judge(
     max_retries: int = 1,
     temperature: float = 0.0,
     enable_thinking: bool | None = False,
+    ablation: str = "full",
 ) -> dict[str, Any]:
     """Adjudicate one item. Malformed JSON is retried before anything is salvaged."""
     candidates, candidate_order = order_candidates(cases, item.get("id"), order_seed)
-    payload = judge_payload(item, candidates, votes)
+    payload = judge_payload(item, candidates, votes, ablation)
+    system_prompt = selective_judge_system_prompt(ablation)
     current_text = json.dumps(payload, ensure_ascii=False)
     attempts: list[dict[str, Any]] = []
     parsed = None
@@ -242,7 +320,7 @@ def run_selective_judge(
     recovered = False
     start = time.perf_counter()
     for attempt_index in range(max_retries + 1):
-        messages = build_messages(current_text, system_prompt=SELECTIVE_JUDGE_SYSTEM_PROMPT)
+        messages = build_messages(current_text, system_prompt=system_prompt)
         raw = strip_think(
             chat(
                 model,
@@ -284,6 +362,7 @@ def run_selective_judge(
         "attempts": attempts,
         "retry_count": max(0, len(attempts) - 1),
         "label_recovered_from_text": recovered,
+        "ablation": ablation,
         "candidate_order": candidate_order,
         "latency_seconds": time.perf_counter() - start,
         "token_usage": {
@@ -293,11 +372,12 @@ def run_selective_judge(
     }
 
 
-def judge_input_tokens(tokenizer, item, cases, votes, order_seed=0) -> int | None:
+def judge_input_tokens(tokenizer, item, cases, votes, order_seed=0, ablation="full"):
     """Prompt size the judge will actually see, for a cost estimate before a run."""
     candidates, _ = order_candidates(cases, item.get("id"), order_seed)
-    payload = judge_payload(item, candidates, votes)
+    payload = judge_payload(item, candidates, votes, ablation)
     messages = build_messages(
-        json.dumps(payload, ensure_ascii=False), system_prompt=SELECTIVE_JUDGE_SYSTEM_PROMPT
+        json.dumps(payload, ensure_ascii=False),
+        system_prompt=selective_judge_system_prompt(ablation),
     )
     return count_message_tokens(tokenizer, messages)

@@ -329,6 +329,30 @@ python scripts/run_selective_advocacy.py \
   --trigger unstable_or_split --dry-run
 ```
 
+### The ablations are not optional
+
+Measured on the EXAONE test run with a Qwen3-8B judge: 0.5175 against majority's
+0.4865 (+31 items, p < 0.001) and debate's 0.4885 (+29, p < 0.001), touching 174
+items at 0.34 generations each. Relative to debate it fixed 39 errors and broke
+10 — the first configuration in this line that behaves like a repair step.
+
+That number is not interpretable on its own. Qwen3-8B alone scores 0.5904 on
+this split, so injecting a stronger model into 17% of the items could produce
+the whole gain with none of the machinery contributing anything. `--ablation`
+runs the controls on the identical trigger and items, judge-only:
+
+| `--ablation` | judge sees | isolates | advocate model |
+|---|---|---|---|
+| `full` | rationales + origin + vote count | the method | needed |
+| `no_commissioned` | only rationales agents wrote | whether commissioning helps | not loaded |
+| `no_votes` | rationales, no count or origin | whether the vote signal helps | needed |
+| `article_only` | the article | **the stronger-model control** | not loaded |
+
+`article_only` is the one that decides whether this line is real. If it matches
+`full`, the advocacy machinery contributes nothing and the result is a model
+swap. The system prompt is rebuilt per ablation so it never describes inputs the
+judge was not given.
+
 `judge_diagnostics.picked_commissioned` counts how often the judge went with a
 counterfactual nobody had proposed, and how many of those were right. If the
 judge almost never picks one, the commissioned cases are not the bottleneck; if
