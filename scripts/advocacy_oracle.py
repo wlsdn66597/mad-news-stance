@@ -36,6 +36,7 @@ HEDGES = (
     "근거가 부족", "보기 어렵", "단정하기", "그러나", "다만",
 )
 PEER_PATTERN = re.compile(r"analyst", re.IGNORECASE)
+HANGUL = re.compile(r"[가-힣]")
 
 
 def parse_args():
@@ -176,6 +177,22 @@ def analyse(path, which_round, articles=None):
     accuracy = sum(row["pred"] == row["gold"] for row in rows) / max(1, len(rows))
     quote_totals = {}
     if articles:
+        # The article is Korean and the advocate prompt is English, so a quote
+        # the advocate translated can never string-match. Split by script: a
+        # Korean quote that is not in the article is a fabrication, an English
+        # one is more likely a rendering. Only the Korean rate is evidence of
+        # invention, and it is the number to report.
+        korean = {"quotes": 0, "verified": 0}
+        latin = {"quotes": 0, "verified": 0}
+        for row in rows:
+            article = articles.get(str(row["item_id"]))
+            if article is None:
+                continue
+            for case in cases_of(row, which_round):
+                for quote in QUOTE_PATTERN.findall(case["analysis"] or ""):
+                    bucket = korean if HANGUL.search(quote) else latin
+                    bucket["quotes"] += 1
+                    bucket["verified"] += normalize(quote) in article
         every = [
             features(case["analysis"], case["stance"], articles.get(str(row["item_id"])))
             for row in rows for case in cases_of(row, which_round)
@@ -191,6 +208,15 @@ def analyse(path, which_round, articles=None):
             ),
             "cases_with_no_verified_quote": sum(
                 1 for f in every if f["verified_quotes"] == 0
+            ),
+            "korean_quotes": korean["quotes"],
+            "korean_verified": korean["verified"],
+            "korean_verified_rate": (
+                korean["verified"] / korean["quotes"] if korean["quotes"] else None
+            ),
+            "latin_quotes": latin["quotes"],
+            "latin_verified_rate": (
+                latin["verified"] / latin["quotes"] if latin["quotes"] else None
             ),
         }
     predictors = []
@@ -244,6 +270,12 @@ def main():
                   f"{grounding['verified_rate']:.1%} actually appear in the article · "
                   f"{grounding['cases_with_no_verified_quote']}/{grounding['cases_checked']} "
                   f"cases cite nothing real")
+            if grounding.get("korean_quotes"):
+                print(f"  by script: Korean {grounding['korean_quotes']} quotes, "
+                      f"{grounding['korean_verified_rate']:.1%} verified   |   "
+                      f"Latin {grounding['latin_quotes']} quotes, "
+                      f"{(grounding['latin_verified_rate'] or 0):.1%} verified"
+                      f"   <- only the Korean rate separates invention from translation")
         print("\nranking the three cases by one surface feature; chance = 0.3333")
         print(f"  {'feature':16} {'dir':5} {'decided':>7} {'acc':>7} {'p':>8} {'judge agrees':>13}")
         for row in report["predictors"]:
