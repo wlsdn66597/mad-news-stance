@@ -95,6 +95,12 @@ def parse_args():
              "article or not before the judge reads them (article_first only). "
              "Measured on these advocates, 19%% of Korean quotes share even "
              "their first twelve characters with the article.")
+    parser.add_argument(
+        "--reuse-commissioned",
+        help="a previous .items.json to take the commissioned advocate cases "
+             "from. Saves regenerating them for every ablation, and makes the "
+             "conditions see literally the same cases instead of separately "
+             "sampled ones.")
     parser.add_argument("--trigger-scope", choices=["last", "any_round"], default="last",
                         help="'last' counts only the final round's labels as proposed; "
                              "'any_round' counts a label proposed in any round")
@@ -146,7 +152,7 @@ def main():
     needs_commissioned = args.ablation in ("full", "no_votes", "article_first")
     advocate_calls = (
         sum(len(missing) for _, triggered, _, missing in plan if triggered)
-        if needs_commissioned else 0
+        if needs_commissioned and not args.reuse_commissioned else 0
     )
     print(f"[plan] {len(records)} items · triggered {triggered_count} "
           f"({triggered_count / max(1, len(records)):.1%}) · "
@@ -162,6 +168,22 @@ def main():
         print(f"[plan][warn] this trigger fires on {triggered_count / len(records):.0%} of "
               f"items; it has degenerated towards --trigger all, and the vote signal "
               f"it was meant to preserve is being overridden on most items", flush=True)
+    reuse_cases = {}
+    if args.reuse_commissioned:
+        source = json.loads(Path(args.reuse_commissioned).read_text(encoding="utf-8"))
+        for row in source:
+            for case in row.get("commissioned_cases", []):
+                if case.get("analysis") is not None:
+                    reuse_cases[(str(row["item_id"]), case["stance"])] = case
+        if not reuse_cases:
+            raise SystemExit(
+                f"{args.reuse_commissioned} carries no commissioned case text; it "
+                "predates the fix that saves it, so the cases have to be regenerated"
+            )
+        print(f"[reuse] {len(reuse_cases)} commissioned cases from "
+              f"{args.reuse_commissioned}; the advocate model will not be loaded",
+              flush=True)
+
     stage1 = {}
     if args.ablation == "article_first":
         if not args.stage1_from:
@@ -217,7 +239,7 @@ def main():
         if triggered and str(record["id"]) not in existing
     ]
     needs_models = args.judge_enabled and bool(outstanding)
-    needs_advocate = needs_models and needs_commissioned
+    needs_advocate = needs_models and needs_commissioned and not reuse_cases
     judge_model = judge_tokenizer = advocate_model = advocate_tokenizer = None
     if needs_models:
         judge_model, judge_tokenizer = load_model(
@@ -228,8 +250,9 @@ def main():
             trust_remote_code=model_cfg.get("trust_remote_code", False),
         )
         if not needs_advocate:
-            print(f"[cfg] --ablation {args.ablation} shows the judge no commissioned "
-                  f"case, so the advocate model is not loaded", flush=True)
+            why = ("the cases are being reused" if reuse_cases
+                   else f"--ablation {args.ablation} shows the judge no commissioned case")
+            print(f"[cfg] {why}, so the advocate model is not loaded", flush=True)
         elif advocate_model_id == judge_model_id:
             advocate_model, advocate_tokenizer = judge_model, judge_tokenizer
         else:
@@ -297,18 +320,24 @@ def main():
                     continue
                 if not needs_commissioned:
                     continue
-                commissioned = run_single_advocate(
-                    advocate_model,
-                    advocate_tokenizer,
-                    item,
-                    label,
-                    temperature=args.advocate_temperature,
-                    max_new_tokens=args.advocate_max_new_tokens,
-                    enable_thinking=False,
-                    prompt_style=args.prompt_style,
-                    generation_seed=args.run_seed,
-                    seed_hook=lambda seed: set_seed(int(seed) % (2**32)),
-                )
+                commissioned = reuse_cases.get((key, label))
+                if commissioned is None and reuse_cases:
+                    raise SystemExit(
+                        f"{args.reuse_commissioned} has no {label} case for item {key}"
+                    )
+                if commissioned is None:
+                    commissioned = run_single_advocate(
+                        advocate_model,
+                        advocate_tokenizer,
+                        item,
+                        label,
+                        temperature=args.advocate_temperature,
+                        max_new_tokens=args.advocate_max_new_tokens,
+                        enable_thinking=False,
+                        prompt_style=args.prompt_style,
+                        generation_seed=args.run_seed,
+                        seed_hook=lambda seed: set_seed(int(seed) % (2**32)),
+                    )
                 cases.append(
                     {
                         "stance": label,
@@ -323,10 +352,11 @@ def main():
                 # keep the text: without it a saved run cannot be audited for
                 # what the judge was actually shown
                 row["commissioned_cases"].append(dict(commissioned))
-                row["advocate_cost"]["calls"] += 1
-                row["advocate_cost"]["latency_seconds"] += commissioned["latency_seconds"]
-                for field, value in commissioned["token_usage"].items():
-                    row["advocate_cost"]["token_usage"][field] += value
+                if not reuse_cases:
+                    row["advocate_cost"]["calls"] += 1
+                    row["advocate_cost"]["latency_seconds"] += commissioned["latency_seconds"]
+                    for field, value in commissioned["token_usage"].items():
+                        row["advocate_cost"]["token_usage"][field] += value
 
             set_seed(int(stable_seed(args.order_seed, key, "selective_advocacy_judge")) % (2**32))
             common = dict(
@@ -398,6 +428,7 @@ def main():
             "trigger_scope": args.trigger_scope,
             "ablation": args.ablation,
             "stage1_from": args.stage1_from,
+            "reuse_commissioned": args.reuse_commissioned,
             "verify_quotes": args.verify_quotes if args.ablation == "article_first" else None,
             "prompt_style": args.prompt_style,
             "advocate_temperature": args.advocate_temperature,

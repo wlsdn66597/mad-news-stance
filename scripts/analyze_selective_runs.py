@@ -38,7 +38,7 @@ def parse_args():
 
 def label_of(path):
     name = Path(path).name
-    for tag in ("article_only", "no_commissioned", "no_votes"):
+    for tag in ("article_only", "no_commissioned", "no_votes", "article_first"):
         if f"abl-{tag}" in name:
             return tag
     return "full"
