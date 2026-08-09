@@ -1,6 +1,12 @@
 import unittest
 
-from src.prompts.stance import LABEL_LINE_EN, PROFILES, get_stance_prompt_profile
+from src.prompts.stance import (
+    LABEL_LINE_EN,
+    PROFILES,
+    STANCE_PERSONAS,
+    get_stance_prompt_profile,
+    stance_personas,
+)
 from src.tasks.stance import Stance
 
 
@@ -103,3 +109,37 @@ class NeutralGateProfileTest(unittest.TestCase):
         for name in ("stance_twostep_en", "stance_gate_en"):
             profile = get_stance_prompt_profile(name)
             self.assertIn(self.ITEM["article"], profile.question(self.ITEM, "cot"), name)
+
+
+class AgentPersonaTest(unittest.TestCase):
+    """Three samples of one prompt are near-copies: measured on EXAONE-4.0-1.2B
+    the agents score 0.4735/0.4725/0.4745, agree 86.5% of the time at round 0,
+    and all three miss on 45.4% of items where independent failures at those
+    accuracies would miss on 14.6%."""
+
+    def test_off_returns_none_so_old_runs_are_untouched(self):
+        self.assertIsNone(stance_personas(3, enabled=False))
+
+    def test_one_prompt_per_agent_and_all_distinct(self):
+        personas = stance_personas(3)
+        self.assertEqual(len(personas), 3)
+        self.assertEqual(len(set(personas)), 3)
+
+    def test_asking_for_more_agents_than_roles_is_refused(self):
+        with self.assertRaises(ValueError):
+            stance_personas(len(STANCE_PERSONAS) + 1)
+
+    def test_the_roles_decompose_the_judgement_the_prompt_already_asks_for(self):
+        framing, sourcing, wording = stance_personas(3)
+        self.assertIn("framing", framing.lower())
+        self.assertIn("quoted", sourcing.lower())
+        self.assertIn("wording", wording.lower())
+
+    def test_no_persona_names_a_stance_to_argue_for(self):
+        """These diversify how the article is read; they do not assign a side.
+        Assigning sides was measured separately and lost to majority everywhere."""
+        for persona in stance_personas(3):
+            lowered = persona.lower()
+            self.assertNotIn("argue", lowered)
+            self.assertNotIn("supportive", lowered)
+            self.assertNotIn("oppositional", lowered)

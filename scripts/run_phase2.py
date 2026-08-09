@@ -15,6 +15,7 @@ from transformers import set_seed
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import methods  # noqa: E402
+from src.prompts.stance import stance_personas  # noqa: E402
 from src.llm import load_model, model_context_window  # noqa: E402
 from src.metrics import LABELS_DEFAULT, format_report  # noqa: E402
 from src.prompts.stance import PROFILES  # noqa: E402
@@ -31,6 +32,10 @@ METHOD_FNS = {
 SHARED_METHODS = {"single", "majority", "debate", "debate_memory"}
 
 
+# methods that run several agents and can therefore take one prompt each
+MULTI_AGENT_METHODS = {"majority", "debate", "debate_memory"}
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config/phase2.yaml")
@@ -39,6 +44,14 @@ def parse_args():
     parser.add_argument("--n", type=int, default=None)
     parser.add_argument("--split", default=None)
     parser.add_argument("--prompt-profile", choices=sorted(PROFILES), default=None)
+    parser.add_argument(
+        "--personas", action="store_true",
+        help="give each agent its own reading role -- framing, sourcing, wording "
+             "-- instead of the same instruction sampled n times. The three "
+             "agents currently score 0.4735/0.4725/0.4745 and agree 86.5%% of "
+             "the time, which caps the candidate pool at 0.5465; this is the "
+             "intervention on that. Everything else, including the vote and the "
+             "parser, is unchanged.")
     parser.add_argument("--data-seed", type=int, default=None)
     parser.add_argument("--run-seed", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
@@ -124,6 +137,10 @@ def main():
     task = Stance(cfg["data_path"], prompt_profile=profile)
     items = task.load(split=split, n=n, seed=data_seed)
     system_prompt = model_cfg.get("system_prompt")
+    if args.personas:
+        # a list here means one persona per agent; single and cot take the first
+        system_prompt = stance_personas(n_agents)
+        print(f"[personas] {len(system_prompt)} distinct agent roles", flush=True)
     enable_thinking = False if args.model == "qwen" else None
 
     print(
@@ -146,7 +163,8 @@ def main():
         f"[tokens] max_new_tokens={max_new_tokens} context_window={context_window}"
     )
 
-    tag = f"_{args.tag}" if args.tag else ""
+    # personas change the run, so they must not land on the same file
+    tag = ("_personas" if args.personas else "") + (f"_{args.tag}" if args.tag else "")
     out_path = Path(
         f"results/phase2/stance_{args.model}_{split}_n{n}_{profile}_"
         f"d{data_seed}_s{run_seed}_a{n_agents}_r{n_rounds}{tag}.json"
@@ -163,6 +181,7 @@ def main():
         "model_id": model_cfg["id"],
         "load_in_4bit": bool(cfg["load_in_4bit"]),
         "prompt_profile": profile,
+        "personas": bool(args.personas),
         "split": split,
         "n": n,
         "data_seed": data_seed,
@@ -213,8 +232,11 @@ def main():
             )
             item_seed = generation_seed(run_seed, task.name, namespace, key)
             set_seed(item_seed)
+            agent_prompts = system_prompt
+            if isinstance(agent_prompts, list) and method not in MULTI_AGENT_METHODS:
+                agent_prompts = agent_prompts[0]
             result = function(
-                model, tokenizer, task, item, system_prompt, max_new_tokens,
+                model, tokenizer, task, item, agent_prompts, max_new_tokens,
                 enable_thinking=enable_thinking,
                 **method_kwargs(
                     method, cfg, args, temperature,

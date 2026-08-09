@@ -105,8 +105,17 @@ def run_debate(
     if other_answers_formatter is None:
         other_answers_formatter = format_others
 
+    # a list gives each agent its own persona; a single value is shared, which
+    # is the historical behaviour and produces an ensemble of near-copies
+    agent_prompts = (
+        list(system_prompt)
+        if isinstance(system_prompt, (list, tuple))
+        else [system_prompt] * n_agents
+    )
+    if len(agent_prompts) != n_agents:
+        raise ValueError(f"got {len(agent_prompts)} system prompts for {n_agents} agents")
     agent_contexts = [
-        build_messages(question, system_prompt=system_prompt) for _ in range(n_agents)
+        build_messages(question, system_prompt=prompt) for prompt in agent_prompts
     ]
     answers_by_round = []
     memory_by_round = []

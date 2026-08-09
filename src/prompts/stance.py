@@ -357,6 +357,57 @@ STANCE_V2_KO = StancePromptProfile(
 )
 
 
+# ------------------------------------------------------- agent role diversity
+#
+# Every run so far gave all three agents the same instruction and differed them
+# only by sampling. Measured on EXAONE-4.0-1.2B at round 0: accuracies 0.4735,
+# 0.4725 and 0.4745, pairwise agreement 0.8651, unanimous on 800 of 1001 items,
+# and all three wrong on 45.4% where independent failures at those accuracies
+# would give 14.6%. The candidate pool -- how often any agent names the gold
+# label -- is stuck at 0.5465, and that is the hard ceiling on every aggregation
+# rule downstream. `single` and `majority k=3` scoring identically is the same
+# fact seen from the other side.
+#
+# ChatEval (Chan et al., ICLR 2024) reports that reusing one role description
+# across agents degrades multi-agent evaluation, and M-MAD (Feng et al., ACL
+# 2025) attributes most of its gain to decoupling the decision across agents
+# rather than to the debate. These personas decompose the judgement the way the
+# stance prompt already asks for it to be decomposed: the journalist's own
+# framing, the opinions merely quoted, and the wording. Each still answers the
+# same three-way question and still votes, so the aggregation and the parser are
+# unchanged; only what each agent attends to differs.
+
+STANCE_PERSONAS = (
+    "You are a news analyst who reads for narrative framing: which claims the "
+    "article foregrounds, what it puts in the headline and lead, what it leaves "
+    "to the end, and what it omits. Judge the article's stance from its own "
+    "construction.",
+    "You are a news analyst who reads for sourcing: who is quoted, in what "
+    "order, at what length, and whether the article endorses or distances "
+    "itself from what they say. An opinion a source holds is not the article's "
+    "stance unless the article adopts it.",
+    "You are a news analyst who reads for wording: the verbs, modifiers and "
+    "labels the journalist chooses when describing each side, and whether that "
+    "choice is evaluative or neutral. Judge the article's stance from its "
+    "language.",
+)
+
+
+def stance_personas(n_agents, enabled=True):
+    """One system prompt per agent, or None to keep the shared prompt.
+
+    Returning None rather than a list of copies keeps the old runs bit-identical
+    when personas are off.
+    """
+    if not enabled:
+        return None
+    if n_agents > len(STANCE_PERSONAS):
+        raise ValueError(
+            f"{n_agents} agents but only {len(STANCE_PERSONAS)} personas are defined"
+        )
+    return list(STANCE_PERSONAS[:n_agents])
+
+
 PROFILES = {
     profile.name: profile
     for profile in (

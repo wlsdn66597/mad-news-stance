@@ -173,7 +173,17 @@ def run_majority(
     initial_style="cot",
 ):
     q = task.question(item, style=initial_style)
-    messages = build_messages(q, system_prompt=sysp)
+    # One system prompt per agent when personas are in use, the same one k times
+    # otherwise. Sampling the identical prompt k times produces near-copies:
+    # measured on EXAONE-4.0-1.2B, the three agents score 0.4735, 0.4725 and
+    # 0.4745, agree pairwise 86.5% of the time at round 0, and all three miss on
+    # 45.4% of items where independent failures at those accuracies would miss
+    # on 14.6%. That correlation is what caps the candidate pool at 0.5465, and
+    # it is why `single` and `majority k=3` score identically.
+    prompts = list(sysp) if isinstance(sysp, (list, tuple)) else [sysp] * k
+    if len(prompts) != k:
+        raise ValueError(f"got {len(prompts)} system prompts for {k} agents")
+    messages = build_messages(q, system_prompt=prompts[0])
     outs, preds = [], []
     if initial_answers is not None:
         if len(initial_answers) != k:
@@ -181,12 +191,12 @@ def run_majority(
         outs = list(initial_answers)
         preds = [task.parse(out) for out in outs]
     else:
-        for _ in range(k):
+        for agent_index in range(k):
             out = strip_think(
                 chat(
                     model,
                     tok,
-                    messages,
+                    build_messages(q, system_prompt=prompts[agent_index]),
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,
                     enable_thinking=enable_thinking,
