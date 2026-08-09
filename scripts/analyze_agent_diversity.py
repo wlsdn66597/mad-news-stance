@@ -32,8 +32,44 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.consensus import LABELS, normalize_label  # noqa: E402
+from src.consensus import LABELS, normalize_label, parse_stance  # noqa: E402
 from src.consensus_io import load_json, result_records  # noqa: E402
+
+
+def records_from(path):
+    """Agent-level predictions, from a debate trace or from round 0 alone.
+
+    A `--methods majority` run has no debate mapping, but the round-0 answers
+    every method shares are saved under `_shared_round0`. Round 0 is where the
+    candidate pool is set, so that is enough for everything here -- and it is
+    the only thing available for a persona check that deliberately skips the
+    debate.
+    """
+    data = load_json(path)
+    if isinstance(data.get("debate"), dict):
+        return result_records(data)
+    shared = data.get("_shared_round0")
+    if not shared:
+        raise SystemExit(
+            f"{path} has neither a debate mapping nor a _shared_round0 block, so "
+            "there are no per-agent answers to compare"
+        )
+    gold = {}
+    for name, block in data.items():
+        if name.startswith("_") or not isinstance(block, dict):
+            continue
+        for key, value in block.items():
+            if isinstance(value, dict) and "gold" in value:
+                gold.setdefault(str(key), value["gold"])
+    records = []
+    for key, entry in shared.items():
+        answers = entry.get("preds") or [parse_stance(a) for a in entry.get("raw", [])]
+        records.append({
+            "id": key,
+            "gold": gold.get(str(key)),
+            "round_predictions": [list(answers)],
+        })
+    return records
 
 
 def parse_args():
@@ -54,9 +90,7 @@ def agreement(rounds):
 
 def main():
     args = parse_args()
-    records = [
-        r for r in result_records(load_json(args.result)) if r.get("gold") in LABELS
-    ]
+    records = [r for r in records_from(args.result) if r.get("gold") in LABELS]
     if not records:
         raise SystemExit("no items with a usable gold label")
     n_agents = max(len(r["round_predictions"][0]) for r in records)
@@ -68,7 +102,9 @@ def main():
     print(f"[items] {len(records)}   agents {n_agents}   "
           f"rounds {len(records[0]['round_predictions'])}")
 
-    for name, rounds in (("round 0", first), ("final round", final)):
+    single_round = len(records[0]["round_predictions"]) == 1
+    stages = (("round 0", first),) if single_round else (("round 0", first), ("final round", final))
+    for name, rounds in stages:
         agree = sum(agreement(r) for r in rounds) / len(rounds)
         distinct = Counter(len(set(r) - {None}) for r in rounds)
         print(f"\n[{name}] mean pairwise agreement {agree:.4f}")
@@ -81,8 +117,11 @@ def main():
     print(f"\n[candidate pool] at least one agent names the gold label")
     print(f"  round 0     {pool_first}/{len(records)} = {pool_first / len(records):.4f}"
           f"   <- the hard ceiling for majority")
-    print(f"  final round {pool_final}/{len(records)} = {pool_final / len(records):.4f}"
-          f"   ({pool_final - pool_first:+d} from the exchange)")
+    if not single_round:
+        print(f"  final round {pool_final}/{len(records)} = {pool_final / len(records):.4f}"
+              f"   ({pool_final - pool_first:+d} from the exchange)")
+    else:
+        print("  (round 0 only in this run; no exchange to report)")
 
     # per-agent accuracy, and what independence would have given
     per_agent = [
@@ -104,9 +143,11 @@ def main():
         "items": len(records),
         "agents": n_agents,
         "agreement_round0": sum(agreement(r) for r in first) / len(records),
-        "agreement_final": sum(agreement(r) for r in final) / len(records),
+        "agreement_final": (
+            None if single_round else sum(agreement(r) for r in final) / len(records)
+        ),
         "pool_round0": pool_first / len(records),
-        "pool_final": pool_final / len(records),
+        "pool_final": None if single_round else pool_final / len(records),
         "per_agent_accuracy": per_agent,
         "all_wrong_observed": observed_all_wrong,
         "all_wrong_if_independent": independent_all_wrong,
