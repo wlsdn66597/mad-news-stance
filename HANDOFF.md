@@ -151,6 +151,53 @@ that the discrimination is absent rather than weak, so this headroom is not
 reachable by prompting this model. The profiles stay in the registry as the
 record of that.
 
+### Agent roles open the candidate pool (2026-08-09)
+
+The three agents were never an ensemble. At round 0 they scored 0.4735,
+0.4725 and 0.4745, agreed pairwise 86.5% of the time and were unanimous on 800
+of 1001 items; all three missed on 45.4% where independent failures at those
+accuracies would miss on 14.6%. That is why `single` and `majority k=3` are the
+same number, and it caps the candidate pool -- how often any agent names the
+gold label -- at 0.5465.
+
+`--personas` gives each agent a distinct reading role (narrative framing,
+sourcing, wording). Same three-way question, same vote, same call count; only
+what each agent attends to differs, and no persona names a side.
+
+On validation the pool went 109 → 135 of 199, **gained 26 and lost 0**, exact
+McNemar p ≈ 3e-8, with per-agent accuracy unchanged (mean 0.4891 → 0.4874). The
+agents did not get better, they started failing differently. It is monotone
+because personas *add* labels rather than replace them: the shared ensemble puts
+one label on the table, personas put about 1.5.
+
+On test at seed 6001 it replicates, smaller: pool 0.5465 → 0.6214 (+75 items),
+agreement 0.8651 → 0.7396, unanimous 800 → 624.
+
+| seed 6001 | accuracy | neutral recall |
+|---|---:|---:|
+| majority, shared prompt | 0.4705 | 0.197 |
+| debate r4, shared prompt | 0.4925 | 0.227 |
+| majority, personas | 0.4875 | 0.285 |
+| **debate r4, personas** | **0.5045** | **0.364** |
+
+`majority shared → debate personas` is +34, p = 0.011, the best result in the
+project. **Neutral recall nearly doubles**, which the two-step prompts could not
+do: they only flipped which class the model defaulted to, while personas improved it
+without touching the label framing at all. Under personas the debate gain moves
+to neutral (+26, p < 0.001) from oppositional (+14) under the shared prompt, and
+`gold never proposed at round 0` falls from 454 to 379 items.
+
+**What is not established.** The marginal contributions are not individually
+significant: debate-shared → debate-personas is +12 (p = 0.404) and
+majority-shared → majority-personas is +17 (p = 0.190). Only the combination
+against the plain baseline clears significance. Personas are one seed so far.
+Debate still shrinks the pool it is given (622 → 587), and 117 items remain
+where some agent holds gold and the vote does not take it -- more unharvested
+pool than before, not less.
+
+Next: personas at seed 6000, which pairs with the existing shared run there and
+gives the second seed.
+
 ### What is left
 
 1. **EXAONE 4-round seed 6002.** 6001 is done and replicated; a third seed
