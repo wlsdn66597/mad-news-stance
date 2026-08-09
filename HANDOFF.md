@@ -187,10 +187,36 @@ without touching the label framing at all. Under personas the debate gain moves
 to neutral (+26, p < 0.001) from oppositional (+14) under the shared prompt, and
 `gold never proposed at round 0` falls from 454 to 379 items.
 
+**Second seed (6000).** Personas win again, and the cost picture is the more
+interesting half.
+
+| method | calls/item | s6000 | s6001 | mean |
+|---|---:|---:|---:|---:|
+| majority k=3, shared | 3 | 487 | 471 | 479 |
+| majority k=12, shared | 12 | 481 | — | — |
+| **majority k=3, personas** | **3** | **515** | 488 | **501.5** |
+| debate r4, shared | 12 | 504 | 493 | 498.5 |
+| **debate r4, personas** | **12** | **527** | 505 | **516** |
+
+Because `share_round0` is on, `majority` uses only the round-0 answers, so the
+persona majority costs **three generations per item**. At seed 6000 it scores
+515 against 504 for four-round debate on the shared prompt at twelve, and on
+average the two are level. Sampling the same prompt four times more (k=12)
+loses six items; splitting what three agents read gains twenty-eight. The
+ensemble literature's basic claim, confirmed the hard way: what an ensemble is
+worth comes from independence, not from member count, and this one was three
+copies.
+
+Personas on top of debate: +23 (p = 0.096) at seed 6000 and +12 (p = 0.404) at
+seed 6001. Same direction twice, mean +17.5, Stouffer combination around
+p = 0.08 -- suggestive, not established.
+
 **What is not established.** The marginal contributions are not individually
-significant: debate-shared → debate-personas is +12 (p = 0.404) and
-majority-shared → majority-personas is +17 (p = 0.190). Only the combination
-against the plain baseline clears significance. Personas are one seed so far.
+significant at either seed on their own, and the pooled estimate sits near
+p = 0.08. Only the combination against the plain baseline clears significance
+at a single seed. The p-value for majority-shared → majority-personas at seed
+6000 (+28) has not been computed yet and is the load-bearing number for the
+cost claim.
 Debate still shrinks the pool it is given (622 → 587), and 117 items remain
 where some agent holds gold and the vote does not take it -- more unharvested
 pool than before, not less.
