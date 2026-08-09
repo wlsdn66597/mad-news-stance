@@ -105,11 +105,56 @@ model improves**, not that enough rounds make it work.
 answers and no results). It can no longer change anything: debate r4 already
 loses to the cheaper k=3.
 
+### Replicated at a second seed (2026-08-09)
+
+The headline holds and the mechanism holds with it.
+
+| seed | majority | debate r4 | net | p |
+|---|---:|---:|---:|---:|
+| 6000 | 0.4865 | 0.5035 | +17 | 0.027 |
+| 6001 | 0.4705 | 0.4925 | +22 | 0.003 |
+
+The concentration in split votes replicates too: on round-0 2:1 items the net
+is +15 (p = 0.036, 189 items) at seed 6000 and +20 (p = 0.003, 198 items) at
+seed 6001, against +3 and +3 on the unanimous ones. That bucket was found by
+looking at seed 6000 and confirmed on seed 6001 without refitting, and the
+second p-value survives Bonferroni over the twelve buckets. The label pattern
+repeats as well -- oppositional +14, neutral +10, supportive −2.
+
+Seed variance is now measured: absolute accuracy moves 11 to 16 items between
+seeds (majority 487 → 471, debate 504 → 493) while the paired within-seed delta
+stays at +17 and +22. Report the paired delta, never the absolute level.
+
+**Defensible claim.** Four-round debate beats majority for EXAONE-4.0-1.2B,
+mean +19.5 items over two seeds, and the gain sits in the 20% of items where
+the agents disagreed at round 0. Two rounds is not enough (+2, ns) and the
+effect is absent for Qwen3-8B at either round count (−10).
+
+### Neutral cannot be reached by prompting (2026-08-09)
+
+Perfect neutral detection is worth +24.9 points, more than everything else in
+this project combined, so the three-label prompt was reframed as two decisions
+-- does the article take a side, and only then which one -- and compared on the
+**validation** split, one agent, one call.
+
+| profile | acc | supportive recall | neutral recall | times it said neutral |
+|---|---:|---:|---:|---:|
+| `stance_minimal_en` (3-way) | 0.4874 | 0.906 | 0.101 | 16 / 69 |
+| `stance_twostep_en` | 0.3618 | 0.031 | 0.855 | 151 / 69 |
+| `stance_gate_en` | 0.3518 | 0.000 | 0.971 | 193 / 69 |
+
+Both new framings lose (−25, p = 0.041 and −27, p = 0.032) and they lose the
+same way: the model does not start detecting neutral, it starts defaulting to
+it. The gate variant calls 193 of 199 items neutral and its supportive recall
+is exactly zero. A framing change that flips the prior wholesale is evidence
+that the discrimination is absent rather than weak, so this headroom is not
+reachable by prompting this model. The profiles stay in the registry as the
+record of that.
+
 ### What is left
 
-1. **EXAONE 4-round seed repeats (6001, 6002).** The +17 is the only positive
-   result in the project, it is one seed, and its p-value is not corrected for
-   the several configurations that were looked at first.
+1. **EXAONE 4-round seed 6002.** 6001 is done and replicated; a third seed
+   would let the claim be reported as a mean over three rather than two.
    `python scripts/run_phase2.py --config config/phase2_exaone_stance_minimal_en.yaml
    --model exaone --methods majority,debate --split test --n 1001 --data-seed 0
    --run-seed 6001 --n-rounds 4` (share_round0 gives both methods for 12
