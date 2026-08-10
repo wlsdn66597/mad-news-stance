@@ -32,7 +32,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.consensus import LABELS, normalize_label, parse_stance  # noqa: E402
+from src.consensus import (  # noqa: E402
+    LABELS,
+    normalize_label,
+    parse_stance,
+    unique_majority,
+)
+from src.metrics import per_class_prf  # noqa: E402
 from src.consensus_io import load_json, result_records  # noqa: E402
 
 
@@ -102,14 +108,47 @@ def main():
     print(f"[items] {len(records)}   agents {n_agents}   "
           f"rounds {len(records[0]['round_predictions'])}")
 
-    single_round = len(records[0]["round_predictions"]) == 1
-    stages = (("round 0", first),) if single_round else (("round 0", first), ("final round", final))
-    for name, rounds in stages:
-        agree = sum(agreement(r) for r in rounds) / len(rounds)
-        distinct = Counter(len(set(r) - {None}) for r in rounds)
-        print(f"\n[{name}] mean pairwise agreement {agree:.4f}")
-        print("  distinct labels on the table: "
-              + ", ".join(f"{k} on {distinct[k]} items" for k in sorted(distinct)))
+    n_rounds = len(records[0]["round_predictions"])
+    single_round = n_rounds == 1
+
+    # One row per round. Debate is a convergence process, so agreement rises and
+    # the pool falls; whether accuracy follows is the question, and the table is
+    # what makes that visible instead of only the endpoints.
+    print(f"\n[per round]")
+    print(f"  {'round':>5} {'agree':>7} {'3:0':>6} {'2 lbl':>6} {'3 lbl':>6} "
+          f"{'pool':>7} {'majority':>9} {'neut R':>7} {'changed':>8}")
+    by_round = []
+    previous = None
+    for index in range(n_rounds):
+        labels = [
+            [normalize_label(v) for v in r["round_predictions"][index]] for r in records
+        ]
+        agree = sum(agreement(r) for r in labels) / len(labels)
+        distinct = Counter(len(set(r) - {None}) for r in labels)
+        pool = sum(g in set(r) for r, g in zip(labels, gold)) / len(labels)
+        votes = [unique_majority(r) for r in labels]
+        preds = [
+            v.label if v.label else next((x for x in r if x in LABELS), None)
+            for v, r in zip(votes, labels)
+        ]
+        acc = sum(p == g for p, g in zip(preds, gold)) / len(gold)
+        neutral = per_class_prf(preds, gold, LABELS)["neutral"]["recall"]
+        changed = (
+            None if previous is None
+            else sum(a != b for row_a, row_b in zip(labels, previous)
+                     for a, b in zip(row_a, row_b)) / (len(labels) * n_agents)
+        )
+        print(f"  {index:>5} {agree:7.4f} {distinct.get(1, 0):6d} "
+              f"{distinct.get(2, 0):6d} {distinct.get(3, 0):6d} {pool:7.4f} "
+              f"{acc:9.4f} {neutral:7.4f} "
+              + (f"{changed:8.4f}" if changed is not None else f"{'-':>8}"))
+        by_round.append({
+            "round": index, "agreement": agree, "unanimous": distinct.get(1, 0),
+            "two_labels": distinct.get(2, 0), "three_labels": distinct.get(3, 0),
+            "candidate_pool": pool, "majority_accuracy": acc,
+            "neutral_recall": neutral, "agent_label_change_rate": changed,
+        })
+        previous = labels
 
     # the pool: what any aggregation rule could possibly reach
     pool_first = sum(g in set(r) for r, g in zip(first, gold))
@@ -148,6 +187,7 @@ def main():
         ),
         "pool_round0": pool_first / len(records),
         "pool_final": None if single_round else pool_final / len(records),
+        "by_round": by_round,
         "per_agent_accuracy": per_agent,
         "all_wrong_observed": observed_all_wrong,
         "all_wrong_if_independent": independent_all_wrong,
