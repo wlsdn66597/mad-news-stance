@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from src.selective_judge import (
     JUDGE_SYSTEM_PROMPT,
+    select_rounds,
     judge_user_payload,
     ordered_candidate_analyses,
     parse_judge_json,
@@ -102,3 +103,53 @@ class SelectiveJudgeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JudgeRoundSelectionTest(unittest.TestCase):
+    """Handing the judge every round means twelve analyses at four rounds, most
+    of them converged near-duplicates, and the later ones argue with each other
+    rather than about the article."""
+
+    TRACE = [[f"round {r}, agent {a}" for a in range(3)] for r in range(4)]
+
+    def test_all_is_every_agent_at_every_round(self):
+        candidates, _ = ordered_candidate_analyses(self.TRACE, "42", 8001, "all")
+        self.assertEqual(len(candidates), 12)
+        self.assertEqual(sorted({c["round"] for c in candidates}), [0, 1, 2, 3])
+
+    def test_last_and_first_give_one_round_each(self):
+        for which, expected in (("last", 3), ("first", 0)):
+            candidates, _ = ordered_candidate_analyses(self.TRACE, "42", 8001, which)
+            self.assertEqual(len(candidates), 3, which)
+            self.assertEqual({c["round"] for c in candidates}, {expected}, which)
+
+    def test_an_agent_keeps_its_letter_whichever_rounds_are_shown(self):
+        """The judge must not be able to tell the conditions apart by which
+        agent got which anonymous label."""
+        every, _ = ordered_candidate_analyses(self.TRACE, "42", 8001, "all")
+        last, _ = ordered_candidate_analyses(self.TRACE, "42", 8001, "last")
+        final_round = {c["candidate_id"]: c["analysis"] for c in every if c["round"] == 3}
+        self.assertEqual(final_round, {c["candidate_id"]: c["analysis"] for c in last})
+
+    def test_a_two_round_trace_still_resolves(self):
+        self.assertEqual(select_rounds([["a"], ["b"]], "last"), [1])
+        self.assertEqual(select_rounds([["a"], ["b"]], "first"), [0])
+        self.assertEqual(select_rounds([], "last"), [])
+
+    def test_unknown_selection_is_rejected(self):
+        with self.assertRaises(ValueError):
+            select_rounds(self.TRACE, "middle")
+
+    ITEM = {"id": "42", "issue": "i", "headline": "h", "article": "body"}
+
+    def test_the_choice_is_recorded_on_the_result(self):
+        output = ('{"label":"neutral","evidence_sufficient":true,'
+                  '"evidence":["x"],"rationale":"y"}')
+        with patch("src.selective_judge.chat", return_value=output):
+            trace_mode = run_judge(object(), FakeTokenizer(), self.ITEM, self.TRACE,
+                                   input_mode="debate_trace", judge_rounds="last")
+            article_mode = run_judge(object(), FakeTokenizer(), self.ITEM, self.TRACE,
+                                     input_mode="article_only", judge_rounds="last")
+        self.assertEqual(trace_mode["judge_rounds"], "last")
+        # nothing was selected from, so claiming a selection would be misleading
+        self.assertIsNone(article_mode["judge_rounds"])

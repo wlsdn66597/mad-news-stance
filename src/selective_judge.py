@@ -70,11 +70,37 @@ def count_tokens(tokenizer, text: str) -> int | None:
         return None
 
 
+JUDGE_ROUNDS = ("all", "last", "first")
+
+
+def select_rounds(raw_rounds, which="all"):
+    """Which rounds of the trace the judge is shown.
+
+    "all" hands over every agent at every round: three agents over four
+    rounds is twelve analyses, most of them near-duplicates of each other
+    once the debate has converged, and the later ones argue with each other
+    rather than about the article -- 84.7% of round-1 outputs mention
+    "Analyst" in the advocacy diagnostic. "last" gives the settled position
+    only, "first" the independent readings before any exchange, which is the
+    round that carried the surface signal in that same diagnostic.
+    """
+    if which not in JUDGE_ROUNDS:
+        raise ValueError(
+            f"unknown judge round selection: {which}; "
+            f"choose one of {', '.join(JUDGE_ROUNDS)}"
+        )
+    if not raw_rounds or which == "all":
+        return list(range(len(raw_rounds)))
+    return [0] if which == "first" else [len(raw_rounds) - 1]
+
+
 def ordered_candidate_analyses(
-    raw_rounds: Sequence[Sequence[str]], item_id: Any, order_seed: int
+    raw_rounds: Sequence[Sequence[str]], item_id: Any, order_seed: int,
+    rounds: str = "all",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Anonymize agents once per item and preserve that mapping across rounds."""
     analyses, order = [], []
+    keep = set(select_rounds(raw_rounds, rounds))
     n_agents = max((len(answers) for answers in raw_rounds), default=0)
     source_indices = list(range(n_agents))
     random.Random(stable_seed(order_seed, item_id, "judge_candidates")).shuffle(source_indices)
@@ -83,6 +109,8 @@ def ordered_candidate_analyses(
         for position, source_index in enumerate(source_indices)
     }
     for round_index, answers in enumerate(raw_rounds):
+        if round_index not in keep:
+            continue
         for source_index in source_indices:
             if source_index >= len(answers):
                 continue
@@ -174,12 +202,13 @@ def run_judge(
     max_retries: int = 1,
     temperature: float = 0.0,
     enable_thinking: bool | None = False,
+    judge_rounds: str = "all",
 ) -> dict[str, Any]:
     if input_mode not in {"article_only", "debate_trace"}:
         raise ValueError(f"unknown judge input mode: {input_mode}")
     if input_mode == "debate_trace":
         candidates, candidate_order = ordered_candidate_analyses(
-            raw_rounds, item.get("id"), order_seed
+            raw_rounds, item.get("id"), order_seed, judge_rounds
         )
     else:
         candidates, candidate_order = [], []
@@ -226,6 +255,7 @@ def run_judge(
         "raw_output": attempts[-1]["raw_output"] if attempts else None,
         "attempts": attempts,
         "retry_count": max(0, len(attempts) - 1),
+        "judge_rounds": judge_rounds if input_mode == "debate_trace" else None,
         "candidate_order": candidate_order,
         "latency_seconds": elapsed,
         "token_usage": {

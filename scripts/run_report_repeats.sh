@@ -44,6 +44,10 @@ JUDGE_MODEL="${JUDGE_MODEL:-}"
 # the case where the trace can carry something. It also matches the judge system
 # prompt, which talks about candidate analyses throughout.
 JUDGE_INPUT="${JUDGE_INPUT:-debate_trace}"
+# all | last | first -- how much of the trace the judge reads. At four
+# rounds "all" is twelve analyses per item and the later ones argue with
+# each other rather than about the article.
+JUDGE_ROUNDS="${JUDGE_ROUNDS:-all}"
 ORDER_SEED="${ORDER_SEED:-8001}"
 DRY_RUN="${DRY_RUN:-0}"
 
@@ -143,16 +147,17 @@ stage_5 () {  # judge only where the personas did not agree
     fi
     args=(--input-result "$source" --data-path "$DATA"
           --judge-trigger non_unanimous --judge-input-mode "$JUDGE_INPUT"
+          --judge-rounds "$JUDGE_ROUNDS"
           --judge-order-seed "$ORDER_SEED" --judge-temperature 0
           --output-dir results/selective_judge_report)
     [ -n "$JUDGE_MODEL" ] && args+=(--judge-model "$JUDGE_MODEL")
-    step "s${seed} stage5 personas r${rounds} + judge (${JUDGE_INPUT})${JUDGE_MODEL:+ ($JUDGE_MODEL)}" \
+    step "s${seed} stage5 personas r${rounds} + judge (${JUDGE_INPUT}/${JUDGE_ROUNDS})${JUDGE_MODEL:+ ($JUDGE_MODEL)}" \
       python scripts/run_selective_judge.py "${args[@]}"
   done
 }
 
 echo "seeds: $SEEDS   stages: $STAGES   judge: ${JUDGE_MODEL:-$MODEL (same backbone)}"
-echo "judge input: $JUDGE_INPUT"
+echo "judge input: $JUDGE_INPUT   rounds shown: $JUDGE_ROUNDS"
 echo "per seed, generations per item: stage1 15, stage3 7, stage4 15,"
 echo "          stage5 ~0.56 judge calls (non-unanimous items only)"
 

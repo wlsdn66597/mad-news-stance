@@ -23,7 +23,11 @@ from src.consensus import (  # noqa: E402
 )
 from src.consensus_io import load_consensus_records  # noqa: E402
 from src.llm import load_model  # noqa: E402
-from src.selective_judge import JUDGE_SYSTEM_PROMPT, run_judge  # noqa: E402
+from src.selective_judge import (  # noqa: E402
+    JUDGE_ROUNDS,
+    JUDGE_SYSTEM_PROMPT,
+    run_judge,
+)
 
 
 def parse_args():
@@ -36,6 +40,12 @@ def parse_args():
     parser.add_argument("--judge-model")
     parser.add_argument("--judge-trigger", choices=["tie_only", "instability", "non_unanimous", "all"], default="instability")
     parser.add_argument("--judge-input-mode", choices=["article_only", "debate_trace"], default="debate_trace")
+    parser.add_argument(
+        "--judge-rounds", choices=list(JUDGE_ROUNDS), default="all",
+        help="which rounds of the trace the judge reads. 'all' is every "
+             "agent at every round -- twelve analyses at four rounds, mostly "
+             "converged duplicates that argue with each other. 'last' is the "
+             "settled position only, 'first' the independent readings.")
     parser.add_argument("--judge-temperature", type=float, default=0.0)
     parser.add_argument("--judge-order-seed", type=int, default=0)
     parser.add_argument("--judge-max-new-tokens", type=int, default=384)
@@ -117,7 +127,9 @@ def main():
     source_stem = Path(args.input_result).stem
     prefix_name = (
         f"{source_stem}_judge-{safe_name(judge_model_id)}_trigger-{args.judge_trigger}_"
-        f"input-{args.judge_input_mode}_seed-{args.judge_order_seed}_"
+        f"input-{args.judge_input_mode}_"
+        f"{'' if args.judge_rounds == 'all' else f'rounds-{args.judge_rounds}_'}"
+        f"seed-{args.judge_order_seed}_"
         f"temp-{args.judge_temperature:g}_tok-{args.judge_max_new_tokens}_retry-{args.judge_max_retries}_"
         f"q4-{int(load_in_4bit)}_agg-{safe_name(args.aggregation_method)}_"
         f"a{meta.get('n_agents', 'x')}_r{meta.get('n_rounds', 'x')}"
@@ -191,6 +203,7 @@ def main():
                 max_retries=args.judge_max_retries,
                 temperature=args.judge_temperature,
                 enable_thinking=False,
+                judge_rounds=args.judge_rounds,
             )
             row.update(
                 {
@@ -236,6 +249,7 @@ def main():
             "quantization": "4bit-nf4" if load_in_4bit else "none",
             "trigger": args.judge_trigger,
             "input_mode": args.judge_input_mode,
+            "judge_rounds": args.judge_rounds,
             "temperature": args.judge_temperature,
             "do_sample": bool(args.judge_temperature > 0),
             "order_seed": args.judge_order_seed,
