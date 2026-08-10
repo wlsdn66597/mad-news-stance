@@ -88,21 +88,34 @@ stage_1 () {  # published MAD, shared prompt
 }
 
 stage_3 () {  # one agent per label, judge on the same backbone
-  local seed="$1"
-  step "s${seed} stage3 advocacy + EXAONE judge" \
+  #
+  # The advocates and the judge use the ToC prompts in src/prompts/advocacy.py,
+  # NOT the stance profile. The profile is in the output filename because it
+  # selected the items, so that name must not be read as the advocate prompt.
+  local seed="$1" baseline
+  local extra=()
+  baseline=$(stem "$seed" 2)
+  # the paired comparison needs stage 1; without it the run still stands alone
+  if [ -f "$baseline" ]; then
+    extra=(--baseline-result "$baseline" --baseline-method majority)
+  else
+    echo "[note] s${seed} stage3: $baseline missing, no paired comparison" >&2
+  fi
+  step "s${seed} stage3 advocacy + judge (same backbone)" \
     python scripts/run_advocacy_judge.py --config "$CONFIG" --model "$MODEL" \
       --split "$SPLIT" --n "$N" --data-seed "$DATA_SEED" --run-seed "$seed" \
       --rounds 2 --prompt-style toc --order-seed "$ORDER_SEED" \
-      --baseline-result "$(stem "$seed" 2)" --baseline-method majority \
-      --output-dir results/advocacy
+      "${extra[@]}" --output-dir results/advocacy
 }
 
 stage_4 () {  # persona debate
   local seed="$1" r2 r4
   r2=$(stem "$seed" 2 _personas); r4=$(stem "$seed" 4 _personas)
+  # no single here: with personas that is agent 0 alone, the framing reader,
+  # which is not the single-agent baseline anyone reading the file would mean
   step "s${seed} stage4 personas r2" \
     python scripts/run_phase2.py --config "$CONFIG" --model "$MODEL" \
-      --methods single,majority,debate --prompt-profile "$PROFILE" --personas \
+      --methods majority,debate --prompt-profile "$PROFILE" --personas \
       --split "$SPLIT" --n "$N" --data-seed "$DATA_SEED" --run-seed "$seed" \
       --n-rounds 2
   carry_round0 "$r2" "$r4"
