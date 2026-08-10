@@ -15,10 +15,10 @@
 # Stage 2 is offline (analyze_agent_diversity.py) and stage 6 is a choice
 # between two stage-5 outputs, so neither generates anything.
 #
-# Every debate agent is EXAONE-4.0-1.2B, including the advocacy judge in stage
-# 3, so the backbone stays uniform. Stage 5 is the one place a stronger model
-# enters: set JUDGE_MODEL="" to keep it EXAONE instead, and report which was
-# used either way.
+# Every model in every stage is EXAONE-4.0-1.2B, judges included, so the report
+# can state one backbone without qualification. Set JUDGE_MODEL to a stronger
+# model if a "MAD + strong judge" row is wanted later; that has to be labelled
+# as such, because it is no longer a single-model result.
 #
 # Everything resumes per item, so re-running a finished seed costs nothing and
 # an interrupted one picks up where it stopped.
@@ -35,7 +35,8 @@ PROFILE="${PROFILE:-stance_minimal_en}"
 SPLIT="${SPLIT:-test}"
 N="${N:-1001}"
 DATA_SEED="${DATA_SEED:-0}"
-JUDGE_MODEL="${JUDGE_MODEL:-Qwen/Qwen3-8B}"
+# empty means the judge is whatever model produced the run: EXAONE
+JUDGE_MODEL="${JUDGE_MODEL:-}"
 ORDER_SEED="${ORDER_SEED:-8001}"
 DRY_RUN="${DRY_RUN:-0}"
 
@@ -130,9 +131,9 @@ stage_5 () {  # judge only where the personas did not agree
   done
 }
 
-echo "seeds: $SEEDS   stages: $STAGES   judge: ${JUDGE_MODEL:-$MODEL}"
+echo "seeds: $SEEDS   stages: $STAGES   judge: ${JUDGE_MODEL:-$MODEL (same backbone)}"
 echo "per seed, generations per item: stage1 15, stage3 7, stage4 15,"
-echo "          stage5 ~0.56 judge calls (non-unanimous only)"
+echo "          stage5 ~0.56 judge calls (non-unanimous items only)"
 
 for seed in $SEEDS; do
   for s in $STAGES; do
