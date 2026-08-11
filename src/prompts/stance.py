@@ -5,7 +5,7 @@ decision protocol in English and Korean so prompt language can be ablated
 without changing the underlying task definition.
 """
 from dataclasses import dataclass, replace
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 
 LABEL_LINE_EN = "Final stance: <supportive|oppositional|neutral>"
@@ -22,6 +22,9 @@ class StancePromptProfile:
     # the self-refine control: the same round structure with the agent's own
     # previous answer in place of its peers'
     self_refine_template: Optional[str] = None
+    # named alternatives to debate_template, each a tuple of one template per
+    # exchange round (a single entry repeats for every round)
+    debate_protocols: Optional[Dict[str, Tuple[str, ...]]] = None
     memory_summary_template: Optional[str] = None
     memory_debate_template: Optional[str] = None
     instruction_first: bool = False
@@ -174,6 +177,89 @@ STANCE_V2_EN_GENERIC_MEMORY = replace(
 )
 
 
+# ------------------------------------------------------------- debate protocols
+#
+# Two alternatives to the baseline exchange, both for `stance_minimal_en` and
+# both keeping the persona system prompts, the round count, the call count and
+# the aggregation untouched. Only the user prompt of rounds 1..n-1 changes, so a
+# difference between the three runs is the protocol.
+#
+# `evidence_gated` repeats one prompt that permits a stance change only against
+# stronger article-grounded evidence. Round 0 already agrees 72.0% of the time
+# and the exchange drives that to 84.7% while the candidate pool falls from
+# 0.6543 to 0.6014; the gate is the intervention on whether that convergence is
+# consensus or conformity.
+#
+# `round_specific` gives each round one cognitive task instead of asking a 1.2B
+# model to audit, rebut, compare and decide in a single pass: verify against the
+# article, then test the strongest contrary reading, then settle. It needs
+# exactly four rounds.
+_MINIMAL_EN_OTHERS = "\n\nThe other agents' judgments are as follows:\n\n{others}"
+
+STANCE_MINIMAL_EN_EVIDENCE_GATED = (
+    "Review the other agents' judgments while keeping your assigned analysis "
+    "perspective.\n"
+    "Check their claims against the original article.\n"
+    "Focus on evidence relevant to your perspective.\n"
+    "Change your stance only if another agent provides stronger article-grounded "
+    "evidence. Otherwise, keep your previous stance.\n"
+    "Do not change your answer merely to agree with the other agents.\n"
+    "Briefly state the decisive evidence for keeping or changing your judgment, "
+    "and answer on the final line in exactly this format:\n\n"
+    + LABEL_LINE_EN
+    + _MINIMAL_EN_OTHERS
+)
+
+STANCE_MINIMAL_EN_ROUND1_EVIDENCE = (
+    "Review the other agents' judgments.\n"
+    "Your only task in this round is to check their claims against the original "
+    "article from your assigned analysis perspective.\n"
+    "Identify the single strongest article-grounded point that supports or "
+    "contradicts your current stance. Do not follow the majority and do not "
+    "evaluate arguments by persuasiveness.\n"
+    "Briefly state the verified evidence, and answer on the final line in exactly "
+    "this format:\n\n"
+    + LABEL_LINE_EN
+    + _MINIMAL_EN_OTHERS
+)
+
+STANCE_MINIMAL_EN_ROUND2_COUNTER = (
+    "Review the other agents' latest judgments and the evidence identified so "
+    "far.\n"
+    "Your only task in this round is to test your current stance against the "
+    "strongest article-grounded evidence for a different stance.\n"
+    "Identify one piece of contrary evidence, if any.\n"
+    "Change your stance only if that evidence is stronger than the evidence "
+    "supporting your current judgment.\n"
+    "Briefly state the decisive comparison, and answer on the final line in "
+    "exactly this format:\n\n"
+    + LABEL_LINE_EN
+    + _MINIMAL_EN_OTHERS
+)
+
+STANCE_MINIMAL_EN_ROUND3_FINAL = (
+    "Make your final judgment using only the article-grounded evidence identified "
+    "during the debate.\n"
+    "Keep your assigned analysis perspective, but consider the strongest verified "
+    "evidence raised by the other agents.\n"
+    "Do not follow the majority simply because the agents agree.\n"
+    "Select the stance best supported by the original article.\n"
+    "Briefly state the decisive evidence, and answer on the final line in exactly "
+    "this format:\n\n"
+    + LABEL_LINE_EN
+    + _MINIMAL_EN_OTHERS
+)
+
+STANCE_MINIMAL_EN_PROTOCOLS = {
+    "evidence_gated": (STANCE_MINIMAL_EN_EVIDENCE_GATED,),
+    "round_specific": (
+        STANCE_MINIMAL_EN_ROUND1_EVIDENCE,
+        STANCE_MINIMAL_EN_ROUND2_COUNTER,
+        STANCE_MINIMAL_EN_ROUND3_FINAL,
+    ),
+}
+
+
 STANCE_MINIMAL_EN = StancePromptProfile(
     name="stance_minimal_en",
     language="en",
@@ -208,6 +294,7 @@ STANCE_MINIMAL_EN = StancePromptProfile(
         + LABEL_LINE_EN
         + "\n\nYour previous judgment is as follows:\n\n{others}"
     ),
+    debate_protocols=STANCE_MINIMAL_EN_PROTOCOLS,
     instruction_first=True,
     article_heading_en="Article",
     other_agent_template="Agent {index}:\n{answer}",

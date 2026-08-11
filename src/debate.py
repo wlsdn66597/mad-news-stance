@@ -100,6 +100,8 @@ def run_debate(
     other_answers_formatter=None,
     peer_mode="peers",
     self_refine_template=None,
+    debate_templates=None,
+    debate_protocol="baseline",
 ):
     if n_agents < 1:
         raise ValueError("n_agents must be at least 1")
@@ -113,6 +115,17 @@ def run_debate(
         # falling back to debate_template would tell the agent its own answer came
         # from someone else, which is the confound this control exists to remove
         raise ValueError("peer_mode='self' needs a self_refine_template")
+    if peer_mode == "self" and debate_templates is not None:
+        # every protocol prompt talks about the other agents' judgments
+        raise ValueError("peer_mode='self' cannot be combined with a debate protocol")
+    # one template repeats for every exchange round; a longer list assigns one
+    # cognitive task per round and therefore has to match the round count
+    round_templates = list(debate_templates or [debate_template])
+    if len(round_templates) not in (1, max(1, n_rounds - 1)):
+        raise ValueError(
+            f"{len(round_templates)} debate templates for {n_rounds} rounds; "
+            f"give 1 to repeat it or {n_rounds - 1}, one per exchange round"
+        )
     if initial_answers is not None and len(initial_answers) != n_agents:
         raise ValueError("initial_answers must contain exactly n_agents responses")
     if other_answers_formatter is None:
@@ -186,7 +199,9 @@ def run_debate(
                         for other_index in range(n_agents)
                         if other_index != agent_index
                     ]
-                    active_template = debate_template
+                    active_template = round_templates[
+                        min(round_index - 1, len(round_templates) - 1)
+                    ]
                 direct_context = other_answers_formatter(others)
                 direct_prompt = active_template.format(
                     others=direct_context, question=question
@@ -276,6 +291,8 @@ def run_debate(
         "n_agents": n_agents,
         "n_rounds": n_rounds,
         "peer_mode": peer_mode,
+        "debate_protocol": debate_protocol,
+        "round_templates": round_templates,
         "communication_mode": "shared_summary" if use_memory else "direct_concat",
         "prompt_profile": prompt_profile,
         "other_answers_format": (

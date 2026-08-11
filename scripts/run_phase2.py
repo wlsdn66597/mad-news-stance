@@ -60,6 +60,15 @@ def parse_args():
              "count, same round 0. It is the control for whether the debate gain "
              "comes from the peer signal or from rereading, which the current "
              "design cannot separate.")
+    parser.add_argument(
+        "--debate-protocol", default="baseline",
+        help="'evidence_gated' repeats one prompt that allows a stance change "
+             "only against stronger article-grounded evidence. 'round_specific' "
+             "gives each of the four rounds one task -- verify, then test the "
+             "strongest contrary reading, then settle -- instead of asking a 1.2B "
+             "model to do all of it every round. Rounds, calls, personas and "
+             "aggregation are identical either way, so the protocol is the only "
+             "thing being compared.")
     parser.add_argument("--data-seed", type=int, default=None)
     parser.add_argument("--run-seed", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
@@ -93,6 +102,7 @@ def method_kwargs(method, cfg, args, temperature, initial_answers=None):
             kwargs["initial_answers"] = initial_answers
     if method == "debate":
         kwargs["peer_mode"] = args.peer_mode
+        kwargs["debate_protocol"] = args.debate_protocol
     if method in {"debate", "debate_memory"}:
         kwargs["n_agents"] = n_agents
         kwargs["n_rounds"] = args.n_rounds or cfg["debate"]["n_rounds"]
@@ -145,9 +155,24 @@ def main():
         raise ValueError("shared Round 0 requires majority.k == debate.n_agents")
 
     task = Stance(cfg["data_path"], prompt_profile=profile)
+    # cheaper to hear all of this now than after the weights are on the GPU
     if args.peer_mode == "self" and not task.self_refine_template:
-        # cheaper to hear it now than after the weights are on the GPU
         sys.exit(f"profile {profile} has no self_refine_template; --peer-mode self needs one")
+    if args.debate_protocol != "baseline":
+        available = sorted(task.debate_protocols)
+        if args.debate_protocol not in task.debate_protocols:
+            sys.exit(
+                f"profile {profile} has no debate protocol {args.debate_protocol}; "
+                f"it offers {', '.join(available) or 'none'}"
+            )
+        templates = task.debate_protocols[args.debate_protocol]
+        if len(templates) not in (1, max(1, n_rounds - 1)):
+            sys.exit(
+                f"protocol {args.debate_protocol} has {len(templates)} round "
+                f"templates but --n-rounds {n_rounds} needs {n_rounds - 1}"
+            )
+        if args.peer_mode == "self":
+            sys.exit("--peer-mode self has no other agents for a debate protocol to address")
     items = task.load(split=split, n=n, seed=data_seed)
     system_prompt = model_cfg.get("system_prompt")
     if args.personas:
@@ -181,6 +206,7 @@ def main():
     tag = (
         ("_personas" if args.personas else "")
         + ("_selfrefine" if args.peer_mode == "self" else "")
+        + ("" if args.debate_protocol == "baseline" else f"_{args.debate_protocol}")
         + (f"_{args.tag}" if args.tag else "")
     )
     out_path = Path(
@@ -201,6 +227,7 @@ def main():
         "prompt_profile": profile,
         "personas": bool(args.personas),
         "peer_mode": args.peer_mode,
+        "debate_protocol": args.debate_protocol,
         "split": split,
         "n": n,
         "data_seed": data_seed,
