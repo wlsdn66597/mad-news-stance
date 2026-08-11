@@ -34,6 +34,9 @@ DEFAULT_MEMORY_DEBATE_TEMPLATE = (
 )
 
 
+PEER_MODES = ("peers", "self")
+
+
 def format_others(other_answers):
     return "\n\n".join(f"[Agent {i + 1}]\n{ans}" for i, ans in enumerate(other_answers))
 
@@ -95,11 +98,21 @@ def run_debate(
     memory_max_new_tokens=256,
     memory_temperature=0.0,
     other_answers_formatter=None,
+    peer_mode="peers",
+    self_refine_template=None,
 ):
     if n_agents < 1:
         raise ValueError("n_agents must be at least 1")
     if n_rounds < 1:
         raise ValueError("n_rounds must be at least 1")
+    if peer_mode not in PEER_MODES:
+        raise ValueError(
+            f"unknown peer mode: {peer_mode}; choose one of {', '.join(PEER_MODES)}"
+        )
+    if peer_mode == "self" and self_refine_template is None:
+        # falling back to debate_template would tell the agent its own answer came
+        # from someone else, which is the confound this control exists to remove
+        raise ValueError("peer_mode='self' needs a self_refine_template")
     if initial_answers is not None and len(initial_answers) != n_agents:
         raise ValueError("initial_answers must contain exactly n_agents responses")
     if other_answers_formatter is None:
@@ -161,13 +174,21 @@ def run_debate(
         delivered_prompts = []
         for agent_index in range(n_agents):
             if round_index > 0:
-                others = [
-                    answers_by_round[round_index - 1][other_index]
-                    for other_index in range(n_agents)
-                    if other_index != agent_index
-                ]
+                if peer_mode == "self":
+                    # same rounds, same generation count, no peer signal: this is
+                    # the control that separates rereading from being told what
+                    # someone else concluded
+                    others = [answers_by_round[round_index - 1][agent_index]]
+                    active_template = self_refine_template
+                else:
+                    others = [
+                        answers_by_round[round_index - 1][other_index]
+                        for other_index in range(n_agents)
+                        if other_index != agent_index
+                    ]
+                    active_template = debate_template
                 direct_context = other_answers_formatter(others)
-                direct_prompt = debate_template.format(
+                direct_prompt = active_template.format(
                     others=direct_context, question=question
                 )
                 direct_contexts.append(direct_prompt)
@@ -254,6 +275,7 @@ def run_debate(
         "system_prompt": system_prompt,
         "n_agents": n_agents,
         "n_rounds": n_rounds,
+        "peer_mode": peer_mode,
         "communication_mode": "shared_summary" if use_memory else "direct_concat",
         "prompt_profile": prompt_profile,
         "other_answers_format": (

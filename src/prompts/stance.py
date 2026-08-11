@@ -19,6 +19,9 @@ class StancePromptProfile:
     cot_instruction: str
     vanilla_instruction: str
     debate_template: str
+    # the self-refine control: the same round structure with the agent's own
+    # previous answer in place of its peers'
+    self_refine_template: Optional[str] = None
     memory_summary_template: Optional[str] = None
     memory_debate_template: Optional[str] = None
     instruction_first: bool = False
@@ -194,6 +197,16 @@ STANCE_MINIMAL_EN = StancePromptProfile(
         "this format:\n\n"
         + LABEL_LINE_EN
         + "\n\nThe other agents' judgments are as follows:\n\n{others}"
+    ),
+    # two phrases away from debate_template, so a difference between the two runs
+    # is the peer signal and not the wording
+    self_refine_template=(
+        "Use your own earlier response as additional information and reconsider "
+        "your previous judgment.\n"
+        "Briefly explain your reasoning, and answer on the final line in exactly "
+        "this format:\n\n"
+        + LABEL_LINE_EN
+        + "\n\nYour previous judgment is as follows:\n\n{others}"
     ),
     instruction_first=True,
     article_heading_en="Article",

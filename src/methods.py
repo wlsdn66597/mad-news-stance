@@ -262,6 +262,7 @@ def run_debate(
     enable_thinking=None,
     initial_answers=None,
     initial_style="cot",
+    peer_mode="peers",
 ):
     question = task.question(item, style=initial_style)
     paper_template = getattr(task, "paper_debate_template", None)
@@ -288,6 +289,8 @@ def run_debate(
             if initial_style == "paper"
             else getattr(task, "format_other_answers", None)
         ),
+        peer_mode=peer_mode,
+        self_refine_template=getattr(task, "self_refine_template", None),
     )
     return _result_from_trace(task, question, trace)
 

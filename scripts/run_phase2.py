@@ -15,6 +15,7 @@ from transformers import set_seed
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import methods  # noqa: E402
+from src.debate import PEER_MODES  # noqa: E402
 from src.prompts.stance import stance_personas  # noqa: E402
 from src.llm import load_model, model_context_window  # noqa: E402
 from src.metrics import LABELS_DEFAULT, format_report  # noqa: E402
@@ -52,6 +53,13 @@ def parse_args():
              "the time, which caps the candidate pool at 0.5465; this is the "
              "intervention on that. Everything else, including the vote and the "
              "parser, is unchanged.")
+    parser.add_argument(
+        "--peer-mode", choices=list(PEER_MODES), default="peers",
+        help="'self' replaces the peer answers with the agent's own previous "
+             "answer and changes nothing else -- same rounds, same generation "
+             "count, same round 0. It is the control for whether the debate gain "
+             "comes from the peer signal or from rereading, which the current "
+             "design cannot separate.")
     parser.add_argument("--data-seed", type=int, default=None)
     parser.add_argument("--run-seed", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
@@ -83,6 +91,8 @@ def method_kwargs(method, cfg, args, temperature, initial_answers=None):
         kwargs["k"] = args.k or cfg["majority"]["k"]
         if initial_answers is not None:
             kwargs["initial_answers"] = initial_answers
+    if method == "debate":
+        kwargs["peer_mode"] = args.peer_mode
     if method in {"debate", "debate_memory"}:
         kwargs["n_agents"] = n_agents
         kwargs["n_rounds"] = args.n_rounds or cfg["debate"]["n_rounds"]
@@ -135,6 +145,9 @@ def main():
         raise ValueError("shared Round 0 requires majority.k == debate.n_agents")
 
     task = Stance(cfg["data_path"], prompt_profile=profile)
+    if args.peer_mode == "self" and not task.self_refine_template:
+        # cheaper to hear it now than after the weights are on the GPU
+        sys.exit(f"profile {profile} has no self_refine_template; --peer-mode self needs one")
     items = task.load(split=split, n=n, seed=data_seed)
     system_prompt = model_cfg.get("system_prompt")
     if args.personas:
@@ -163,8 +176,13 @@ def main():
         f"[tokens] max_new_tokens={max_new_tokens} context_window={context_window}"
     )
 
-    # personas change the run, so they must not land on the same file
-    tag = ("_personas" if args.personas else "") + (f"_{args.tag}" if args.tag else "")
+    # personas and the self-refine control change the run, so they must not land
+    # on the same file
+    tag = (
+        ("_personas" if args.personas else "")
+        + ("_selfrefine" if args.peer_mode == "self" else "")
+        + (f"_{args.tag}" if args.tag else "")
+    )
     out_path = Path(
         f"results/phase2/stance_{args.model}_{split}_n{n}_{profile}_"
         f"d{data_seed}_s{run_seed}_a{n_agents}_r{n_rounds}{tag}.json"
@@ -182,6 +200,7 @@ def main():
         "load_in_4bit": bool(cfg["load_in_4bit"]),
         "prompt_profile": profile,
         "personas": bool(args.personas),
+        "peer_mode": args.peer_mode,
         "split": split,
         "n": n,
         "data_seed": data_seed,
