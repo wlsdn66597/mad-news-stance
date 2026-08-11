@@ -107,6 +107,8 @@ def conditions(args, seed):
             f"{base}_r4_personas_evidence_gated.json", "debate"),
         "persona 4R round-specific": from_phase2(
             f"{base}_r4_personas_round_specific.json", "debate"),
+        "persona 4R reasoned-exchange": from_phase2(
+            f"{base}_r4_personas_reasoned_exchange.json", "debate"),
         "persona 4R evidence-gated v2": from_phase2(
             f"{base}_r4_personas_evidence_gated_v2.json", "debate"),
         "persona 4R round-specific v2": from_phase2(
@@ -151,7 +153,8 @@ def main():
     order = ["single", "majority k=3", "debate 2R", "debate 4R", "advocacy + judge",
              "persona majority", "persona debate 2R", "persona debate 4R",
              "persona 4R self-refine", "persona 4R evidence-gated",
-             "persona 4R round-specific", "persona 4R evidence-gated v2",
+             "persona 4R round-specific", "persona 4R reasoned-exchange",
+             "persona 4R evidence-gated v2",
              "persona 4R round-specific v2",
              "persona 2R + judge", "persona 4R + judge"]
     main_keys = ["accuracy", "macro_f1", "neutral_recall"]

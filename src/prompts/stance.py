@@ -335,6 +335,39 @@ STANCE_MINIMAL_EN_ROUND3_FINAL_V2 = (
     + _MINIMAL_EN_OTHERS
 )
 
+# ------------------------------------------------------- filling the channel
+#
+# Measured on test s6000: 90%+ of what an agent writes is the label alone --
+# round-0 answers have a median of 24 characters, the length of "Final stance:
+# supportive", and persona rounds 1-3 stay there. Since each round pastes the
+# other agents' previous answers into the prompt verbatim, an agent's only new
+# information from its peers is how they voted. Published MAD assumes it reads
+# their reasoning; here there is none to read, so what looks like debate can
+# only be majority pressure -- which is what unanimity 595 -> 784 against a net
+# of +12 items looks like.
+#
+# This protocol changes what travels between agents and nothing else. It does
+# not say which way to decide, unlike the two above: no default stance, no
+# definition of neutral, no instruction about the majority. It demands one
+# quoted sentence before the label, and it puts the format demand *after* the
+# peers' answers rather than before them, because in the baseline template the
+# demand sits far from the point of generation and is ignored.
+#
+# The test is the label-only rate at rounds 2 and 3, where peers first see an
+# evidence line. Accuracy is secondary: if the channel cannot be filled at this
+# model size, that is the finding, and it separates "MAD does not help here"
+# from "MAD never ran here".
+STANCE_MINIMAL_EN_REASONED_EXCHANGE = (
+    "Use the other agents' responses as additional information and reconsider "
+    "your previous judgment.\n\n"
+    "The other agents' judgments are as follows:\n\n"
+    "{others}\n\n"
+    "Answer in exactly two lines, in this order:\n"
+    "Evidence: <one sentence, quoting the wording in the article that decides "
+    "your judgment>\n"
+    + LABEL_LINE_EN
+)
+
 STANCE_MINIMAL_EN_PROTOCOLS = {
     "evidence_gated": (STANCE_MINIMAL_EN_EVIDENCE_GATED,),
     "round_specific": (
@@ -342,6 +375,7 @@ STANCE_MINIMAL_EN_PROTOCOLS = {
         STANCE_MINIMAL_EN_ROUND2_COUNTER,
         STANCE_MINIMAL_EN_ROUND3_FINAL,
     ),
+    "reasoned_exchange": (STANCE_MINIMAL_EN_REASONED_EXCHANGE,),
     "evidence_gated_v2": (STANCE_MINIMAL_EN_EVIDENCE_GATED_V2,),
     "round_specific_v2": (
         STANCE_MINIMAL_EN_ROUND1_EVIDENCE_V2,

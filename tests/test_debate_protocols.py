@@ -146,6 +146,17 @@ class DebateProtocolTest(unittest.TestCase):
         self.assertIn("Quote the single strongest passage", v2)
         self.assertIn("as written", v2)
 
+    def test_reasoned_exchange_asks_last_and_steers_nothing(self):
+        template = STANCE_MINIMAL_EN_PROTOCOLS["reasoned_exchange"][0]
+        # the demand has to sit after the peers, where generation begins
+        self.assertLess(template.index("{others}"), template.index("Evidence:"))
+        self.assertLess(template.index("{others}"),
+                        template.index("Final stance:"))
+        # and it must not tell the agent which way to decide
+        for steer in ("keep your previous stance", "merely to agree",
+                      "Neutral is not a tie-breaker", "majority"):
+            self.assertNotIn(steer, template)
+
     def test_the_profile_carries_the_protocols(self):
         self.assertEqual(
             STANCE_MINIMAL_EN.debate_protocols, STANCE_MINIMAL_EN_PROTOCOLS
