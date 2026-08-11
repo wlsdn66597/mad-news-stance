@@ -250,12 +250,103 @@ STANCE_MINIMAL_EN_ROUND3_FINAL = (
     + _MINIMAL_EN_OTHERS
 )
 
+# --------------------------------------------------------------- and their v2
+#
+# Measured on test s6000, both v1 protocols failed in a specific way.
+#
+# The gate froze completely: 0 of 3003 agent labels moved at any of the three
+# exchange rounds. "Otherwise, keep your previous stance" is a default that
+# costs nothing to obey, so the model satisfied the instruction by restating
+# its label. v2 removes the default and asks instead for something only reading
+# can produce -- the deciding passage, quoted, checked against the article.
+#
+# The round-specific R2 collapsed to neutral: accuracy 0.4975 -> 0.3976, neutral
+# recall 0.3121 -> 0.8061, net -101 (p<0.001), which the final round then mostly
+# undid. Asked to look for contrary evidence, the model read "evidence on both
+# sides" as "neutral" -- neutral used as abstention rather than as a class. v2
+# says what neutral is, and R3 repeats it so the two rounds cannot disagree.
+# R1 also barely moved anything (9 items), so v2 gives it the same quote
+# requirement and it feeds verified passages into the later rounds.
+#
+# The gate keeps a single change so the de-freeze can be attributed on its own;
+# if it moves again but neutral recall stays flat, the neutral clause is the
+# next thing to add.
+STANCE_MINIMAL_EN_EVIDENCE_GATED_V2 = (
+    "Review the other agents' judgments while keeping your assigned analysis "
+    "perspective.\n"
+    "Check their claims against the original article: quote the one passage "
+    "that decides the question, and say whether it appears in the article as "
+    "written.\n"
+    "Vote counts are not evidence. Do not change your answer merely to agree "
+    "with the other agents; change it only when a passage another agent cites "
+    "is stronger than the one supporting your current judgment.\n"
+    "Briefly state the decisive passage, and answer on the final line in "
+    "exactly this format:\n\n"
+    + LABEL_LINE_EN
+    + _MINIMAL_EN_OTHERS
+)
+
+STANCE_MINIMAL_EN_ROUND1_EVIDENCE_V2 = (
+    "Review the other agents' judgments.\n"
+    "Your only task in this round is to check their claims against the original "
+    "article from your assigned analysis perspective.\n"
+    "Quote the single strongest passage that supports or contradicts your "
+    "current stance, and say whether it appears in the article as written. Do "
+    "not follow the majority and do not evaluate arguments by "
+    "persuasiveness.\n"
+    "Briefly state the verified passage, and answer on the final line in "
+    "exactly this format:\n\n"
+    + LABEL_LINE_EN
+    + _MINIMAL_EN_OTHERS
+)
+
+_NEUTRAL_IS_NOT_A_TIE = (
+    "Neutral is not a tie-breaker: choose neutral only if the article itself "
+    "takes no side, never because the evidence points both ways.\n"
+)
+
+STANCE_MINIMAL_EN_ROUND2_COUNTER_V2 = (
+    "Review the other agents' latest judgments and the passages verified so "
+    "far.\n"
+    "Your only task in this round is to test your current stance against the "
+    "strongest article-grounded evidence for a different stance.\n"
+    "Name the one competing stance with the best support, and the single "
+    "passage that supports it.\n"
+    + _NEUTRAL_IS_NOT_A_TIE
+    + "Change your stance only if that passage outweighs the evidence for your "
+    "current judgment.\n"
+    "Briefly state the decisive comparison, and answer on the final line in "
+    "exactly this format:\n\n"
+    + LABEL_LINE_EN
+    + _MINIMAL_EN_OTHERS
+)
+
+STANCE_MINIMAL_EN_ROUND3_FINAL_V2 = (
+    "Make your final judgment using only the article-grounded passages verified "
+    "during the debate.\n"
+    "Keep your assigned analysis perspective, but consider the strongest "
+    "verified passage raised by the other agents.\n"
+    "Do not follow the majority simply because the agents agree.\n"
+    + _NEUTRAL_IS_NOT_A_TIE
+    + "Select the stance best supported by the original article.\n"
+    "Briefly state the decisive passage, and answer on the final line in "
+    "exactly this format:\n\n"
+    + LABEL_LINE_EN
+    + _MINIMAL_EN_OTHERS
+)
+
 STANCE_MINIMAL_EN_PROTOCOLS = {
     "evidence_gated": (STANCE_MINIMAL_EN_EVIDENCE_GATED,),
     "round_specific": (
         STANCE_MINIMAL_EN_ROUND1_EVIDENCE,
         STANCE_MINIMAL_EN_ROUND2_COUNTER,
         STANCE_MINIMAL_EN_ROUND3_FINAL,
+    ),
+    "evidence_gated_v2": (STANCE_MINIMAL_EN_EVIDENCE_GATED_V2,),
+    "round_specific_v2": (
+        STANCE_MINIMAL_EN_ROUND1_EVIDENCE_V2,
+        STANCE_MINIMAL_EN_ROUND2_COUNTER_V2,
+        STANCE_MINIMAL_EN_ROUND3_FINAL_V2,
     ),
 }
 

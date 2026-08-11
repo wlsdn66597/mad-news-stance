@@ -107,6 +107,10 @@ def conditions(args, seed):
             f"{base}_r4_personas_evidence_gated.json", "debate"),
         "persona 4R round-specific": from_phase2(
             f"{base}_r4_personas_round_specific.json", "debate"),
+        "persona 4R evidence-gated v2": from_phase2(
+            f"{base}_r4_personas_evidence_gated_v2.json", "debate"),
+        "persona 4R round-specific v2": from_phase2(
+            f"{base}_r4_personas_round_specific_v2.json", "debate"),
     }
     # advocacy: one agent per label, judge on the same backbone
     adv = find_one(f"results/advocacy/advocacy_{args.model}_{args.split}_n{args.n}_"
@@ -147,7 +151,8 @@ def main():
     order = ["single", "majority k=3", "debate 2R", "debate 4R", "advocacy + judge",
              "persona majority", "persona debate 2R", "persona debate 4R",
              "persona 4R self-refine", "persona 4R evidence-gated",
-             "persona 4R round-specific",
+             "persona 4R round-specific", "persona 4R evidence-gated v2",
+             "persona 4R round-specific v2",
              "persona 2R + judge", "persona 4R + judge"]
     main_keys = ["accuracy", "macro_f1", "neutral_recall"]
     lines = [f"seeds: {', '.join(args.seeds)}", ""]

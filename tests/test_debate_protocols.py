@@ -123,6 +123,29 @@ class DebateProtocolTest(unittest.TestCase):
                     "Final stance: <supportive|oppositional|neutral>", template
                 )
 
+    def test_v2_drops_the_default_that_froze_the_gate(self):
+        v1 = STANCE_MINIMAL_EN_PROTOCOLS["evidence_gated"][0]
+        v2 = STANCE_MINIMAL_EN_PROTOCOLS["evidence_gated_v2"][0]
+        self.assertIn("keep your previous stance", v1)
+        self.assertNotIn("keep your previous stance", v2)
+        self.assertIn("quote the one passage", v2)
+        # the anti-conformity clause is the part that must survive
+        self.assertIn("merely to agree", v2)
+
+    def test_v2_says_what_neutral_is_in_every_round_that_decides(self):
+        steps = STANCE_MINIMAL_EN_PROTOCOLS["round_specific_v2"]
+        for template in steps[1:]:
+            self.assertIn("Neutral is not a tie-breaker", template)
+        for template in STANCE_MINIMAL_EN_PROTOCOLS["round_specific"]:
+            self.assertNotIn("Neutral is not a tie-breaker", template)
+
+    def test_v2_gives_the_first_round_something_to_produce(self):
+        v1, v2 = (STANCE_MINIMAL_EN_PROTOCOLS[name][0]
+                  for name in ("round_specific", "round_specific_v2"))
+        self.assertNotIn("as written", v1)
+        self.assertIn("Quote the single strongest passage", v2)
+        self.assertIn("as written", v2)
+
     def test_the_profile_carries_the_protocols(self):
         self.assertEqual(
             STANCE_MINIMAL_EN.debate_protocols, STANCE_MINIMAL_EN_PROTOCOLS
