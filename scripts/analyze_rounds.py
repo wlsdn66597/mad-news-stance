@@ -6,6 +6,12 @@
 
 Reads only the saved trace, never calls a model. Gold labels are used for
 evaluation only. Works for any number of rounds and agents.
+
+Every round carries accuracy, macro-F1 and neutral recall, not accuracy alone:
+the classes are near balanced but the model is not, so a prompt that changes
+how readily an agent moves off its stance can buy accuracy by trading one class
+for another. The transition lines then say whether a round paid, and the exact
+McNemar p applies to accuracy only.
 """
 import argparse
 import json
@@ -16,7 +22,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.consensus import judge_trigger, unique_majority  # noqa: E402
+from src.consensus import LABELS, judge_trigger, unique_majority  # noqa: E402
+from src.metrics import macro_f1, per_class_prf  # noqa: E402
 from src.tasks.stance import Stance  # noqa: E402
 
 
@@ -83,14 +90,39 @@ def main():
          for row in rows]
         for r in range(n_rounds)
     ]
-    accuracies = [sum(p == g for p, g in zip(preds, gold)) / n for preds in majority]
     saved = [row["saved_pred"] for row in rows]
-    print("\n[accuracy] " + "  ".join(
-        f"round{r}={accuracy:.4f}" for r, accuracy in enumerate(accuracies)
-    ) + f"   (saved pred={sum(p == g for p, g in zip(saved, gold)) / n:.4f})")
+
+    def score(preds):
+        """Accuracy alone hides class trading, which is the failure mode of any
+        prompt that discourages changing a stance."""
+        return {
+            "accuracy": sum(p == g for p, g in zip(preds, gold)) / n,
+            "macro_f1": macro_f1(preds, gold, LABELS),
+            "neutral_recall": per_class_prf(preds, gold, LABELS)["neutral"]["recall"],
+        }
+
+    unanimity = [
+        sum(1 for row in rows if r < len(row["rounds"]) and len(set(row["rounds"][r])) == 1)
+        for r in range(n_rounds)
+    ]
+    by_round = [score(preds) for preds in majority]
+    accuracies = [row["accuracy"] for row in by_round]
+
+    print("\n[per round]  (a tie has no unique majority and counts as wrong here)")
+    print(f"  {'round':>5} {'accuracy':>9} {'macro-F1':>9} {'neut R':>8} {'unanimous':>10}")
+    for r, row in enumerate(by_round):
+        print(f"  {r:>5} {row['accuracy']:9.4f} {row['macro_f1']:9.4f} "
+              f"{row['neutral_recall']:8.4f} "
+              f"{unanimity[r]:6d} ({unanimity[r] / n:.1%})")
+    saved_scores = score(saved)
+    print(f"  saved {saved_scores['accuracy']:9.4f} {saved_scores['macro_f1']:9.4f} "
+          f"{saved_scores['neutral_recall']:8.4f}"
+          f"{'':>11} <- run_phase2's prediction, which breaks ties")
 
     report = {"file": args.result, "items": n, "n_rounds": n_rounds, "n_agents": n_agents,
-              "round_accuracy": accuracies, "rounds": [], "meta": meta}
+              "round_accuracy": accuracies, "round_scores": by_round,
+              "saved_scores": saved_scores, "unanimity": unanimity,
+              "rounds": [], "meta": meta}
 
     print("\n[per round] majority label movement")
     for r in range(1, n_rounds):
@@ -108,24 +140,18 @@ def main():
                 flips["wrong_to_correct" if now == row["gold"] else
                       "correct_to_wrong" if was == row["gold"] else "wrong_to_wrong"] += 1
         answers = sum(len(row["rounds"][r]) for row in rows if r < len(row["rounds"]))
+        delta_f1 = by_round[r]["macro_f1"] - by_round[r - 1]["macro_f1"]
         print(f"  r{r-1}->r{r}  changed={changed:4d}/{n}  "
               f"wrong->correct={stats['wrong_to_correct']:3d}  "
               f"correct->wrong={stats['correct_to_wrong']:3d}  "
-              f"net={stats['net']:+d}  McNemar p={stats['p_value']:.3f}")
+              f"net={stats['net']:+d}  McNemar p={stats['p_value']:.3f}  "
+              f"macro-F1 {delta_f1:+.4f}")
         print(f"           agents flipped={flips['flipped']:4d}/{answers}  "
               f"w->c={flips['wrong_to_correct']:3d}  c->w={flips['correct_to_wrong']:3d}  "
               f"w->w={flips['wrong_to_wrong']:3d}")
         report["rounds"].append({"from": r - 1, "to": r, "changed": changed,
-                                 "majority": stats, "agent_flips": dict(flips)})
-
-    unanimity = [
-        sum(1 for row in rows if r < len(row["rounds"]) and len(set(row["rounds"][r])) == 1)
-        for r in range(n_rounds)
-    ]
-    print("\n[unanimity] " + "  ".join(
-        f"round{r}={count}/{n} ({count/n:.1%})" for r, count in enumerate(unanimity)
-    ))
-    report["unanimity"] = unanimity
+                                 "majority": stats, "agent_flips": dict(flips),
+                                 "macro_f1_delta": delta_f1})
 
     # 유형 분석 1: round 0 -> last round, per item
     transitions = Counter()
@@ -226,15 +252,29 @@ def main():
         golds = [data[args.method][i]["gold"] for i in shared]
         stats = mcnemar(theirs, mine, golds)
         same = sum(x == y for x, y in zip(mine, theirs))
+
+        def scored(preds):
+            return {
+                "accuracy": sum(p == g for p, g in zip(preds, golds)) / len(shared),
+                "macro_f1": macro_f1(preds, golds, LABELS),
+                "neutral_recall": per_class_prf(preds, golds, LABELS)["neutral"]["recall"],
+            }
+
+        base, mine_scores = scored(theirs), scored(mine)
         print(f"\n[compare] vs {Path(args.compare).name} on {len(shared)} shared items")
-        print(f"          accuracy {sum(t == g for t, g in zip(theirs, golds))/len(shared):.4f}"
-              f" -> {sum(m == g for m, g in zip(mine, golds))/len(shared):.4f}"
-              f"   identical predictions={same}/{len(shared)}")
+        for key in ("accuracy", "macro_f1", "neutral_recall"):
+            print(f"          {key:14} {base[key]:.4f} -> {mine_scores[key]:.4f}"
+                  f"  ({mine_scores[key] - base[key]:+.4f})")
+        print(f"          identical predictions={same}/{len(shared)}")
         print(f"          wrong->correct={stats['wrong_to_correct']}  "
               f"correct->wrong={stats['correct_to_wrong']}  net={stats['net']:+d}  "
               f"McNemar p={stats['p_value']:.3f}")
+        print("          McNemar tests accuracy only; macro-F1 and neutral recall "
+              "carry no p-value here")
         report["compare"] = {"file": args.compare, "shared_items": len(shared),
-                             "identical_predictions": same, **stats}
+                             "identical_predictions": same,
+                             "baseline_scores": base, "candidate_scores": mine_scores,
+                             **stats}
 
     if args.json_out:
         Path(args.json_out).write_text(
