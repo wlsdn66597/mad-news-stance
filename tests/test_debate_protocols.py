@@ -157,6 +157,20 @@ class DebateProtocolTest(unittest.TestCase):
                       "Neutral is not a tie-breaker", "majority"):
             self.assertNotIn(steer, template)
 
+    def test_reasoned_exchange_v2_anchors_the_closing_line(self):
+        v1 = STANCE_MINIMAL_EN_PROTOCOLS["reasoned_exchange"][0]
+        v2 = STANCE_MINIMAL_EN_PROTOCOLS["reasoned_exchange_v2"][0]
+        # v1 ends on the format spec; 11% of round-1 answers stopped before it
+        self.assertTrue(v1.rstrip().endswith("<supportive|oppositional|neutral>"))
+        self.assertIn("must begin with", v2)
+        self.assertIn("Do not stop before it", v2)
+        self.assertIn("at most 25 words", v2)
+        # still evidence first, still steering nothing
+        self.assertLess(v2.index("Evidence:"), v2.index("Final stance:"))
+        for steer in ("keep your previous stance", "merely to agree",
+                      "Neutral is not a tie-breaker", "majority"):
+            self.assertNotIn(steer, v2)
+
     def test_the_profile_carries_the_protocols(self):
         self.assertEqual(
             STANCE_MINIMAL_EN.debate_protocols, STANCE_MINIMAL_EN_PROTOCOLS

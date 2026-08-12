@@ -368,6 +368,27 @@ STANCE_MINIMAL_EN_REASONED_EXCHANGE = (
     + LABEL_LINE_EN
 )
 
+# The channel fills -- label-only drops from 95% to 0.5% and the evidence lines
+# are real Korean quotations -- but 341 of 3003 round-1 answers carry no label
+# at all, and 210 at round 3. Those answers have a median of 87 characters
+# against a 1024-token budget, so nothing was truncated: the agent writes the
+# Evidence line and stops. Each one drops an agent out of a three-way vote, so
+# the +23 at the first exchange round was measured while losing 7-11% of the
+# ballots. v2 keeps the ordering, since evidence before the label is the point,
+# and anchors the closing line instead.
+STANCE_MINIMAL_EN_REASONED_EXCHANGE_V2 = (
+    "Use the other agents' responses as additional information and reconsider "
+    "your previous judgment.\n\n"
+    "The other agents' judgments are as follows:\n\n"
+    "{others}\n\n"
+    "Answer with both of these lines, in this order and nothing else:\n"
+    "Evidence: <at most 25 words, quoting the wording in the article that "
+    "decides your judgment>\n"
+    + LABEL_LINE_EN
+    + "\nThe last line of your answer must begin with \"Final stance:\". Do not "
+    "stop before it."
+)
+
 STANCE_MINIMAL_EN_PROTOCOLS = {
     "evidence_gated": (STANCE_MINIMAL_EN_EVIDENCE_GATED,),
     "round_specific": (
@@ -376,6 +397,7 @@ STANCE_MINIMAL_EN_PROTOCOLS = {
         STANCE_MINIMAL_EN_ROUND3_FINAL,
     ),
     "reasoned_exchange": (STANCE_MINIMAL_EN_REASONED_EXCHANGE,),
+    "reasoned_exchange_v2": (STANCE_MINIMAL_EN_REASONED_EXCHANGE_V2,),
     "evidence_gated_v2": (STANCE_MINIMAL_EN_EVIDENCE_GATED_V2,),
     "round_specific_v2": (
         STANCE_MINIMAL_EN_ROUND1_EVIDENCE_V2,
