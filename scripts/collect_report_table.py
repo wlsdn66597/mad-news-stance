@@ -111,6 +111,10 @@ def conditions(args, seed):
             f"{base}_r4_personas_reasoned_exchange.json", "debate"),
         "persona 4R reasoned-exchange v2": from_phase2(
             f"{base}_r4_personas_reasoned_exchange_v2.json", "debate"),
+        "persona 4R reasoned-exchange anchored": from_phase2(
+            f"{base}_r4_personas_reasoned_exchange_anchored.json", "debate"),
+        "persona 4R reasoned-exchange NONE": from_phase2(
+            f"{base}_r4_personas_reasoned_exchange_none.json", "debate"),
         "persona 4R reasoned-exchange long": from_phase2(
             f"{base}_r4_personas_reasoned_exchange_long.json", "debate"),
         "persona 4R evidence-gated v3": from_phase2(
@@ -164,6 +168,8 @@ def main():
              "persona 4R round-specific", "persona 4R reasoned-exchange",
              "persona 4R reasoned-exchange v2",
              "persona 4R reasoned-exchange long",
+             "persona 4R reasoned-exchange anchored",
+             "persona 4R reasoned-exchange NONE",
              "persona 4R evidence-gated v3", "persona 4R round-specific v3",
              "persona 4R evidence-gated v2",
              "persona 4R round-specific v2",

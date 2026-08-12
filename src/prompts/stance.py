@@ -477,7 +477,36 @@ STANCE_MINIMAL_EN_ROUND3_FINAL_V3 = (
     + _REASONED_CLOSE
 )
 
+# The falsification test for the format claim. Four protocols with different
+# instructions all pushed supportive to 1.75-2.05x its gold count and neutral
+# down to 0.12-0.36 of it, so the collapse tracks the output requirement rather
+# than the wording of any one instruction. If that is right, giving the absence
+# somewhere to go should bring neutral back; if neutral stays dead, the claim is
+# wrong and the cause lies elsewhere. The pair below differs in one clause.
+_REASONED_CLOSE_NONE = _REASONED_CLOSE.replace(
+    "your judgment>",
+    "your judgment, or NONE if the article's own framing does not take a side>",
+)
+
+STANCE_MINIMAL_EN_REASONED_ANCHORED = (
+    "Use the other agents' responses as additional information and reconsider "
+    "your previous judgment.\n\n"
+    "The other agents' judgments are as follows:\n\n"
+    "{others}\n\n"
+    + _REASONED_CLOSE
+)
+
+STANCE_MINIMAL_EN_REASONED_NONE = (
+    "Use the other agents' responses as additional information and reconsider "
+    "your previous judgment.\n\n"
+    "The other agents' judgments are as follows:\n\n"
+    "{others}\n\n"
+    + _REASONED_CLOSE_NONE
+)
+
 STANCE_MINIMAL_EN_PROTOCOLS = {
+    "reasoned_exchange_anchored": (STANCE_MINIMAL_EN_REASONED_ANCHORED,),
+    "reasoned_exchange_none": (STANCE_MINIMAL_EN_REASONED_NONE,),
     "evidence_gated": (STANCE_MINIMAL_EN_EVIDENCE_GATED,),
     "round_specific": (
         STANCE_MINIMAL_EN_ROUND1_EVIDENCE,
