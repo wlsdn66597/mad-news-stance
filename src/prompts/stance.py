@@ -504,7 +504,24 @@ STANCE_MINIMAL_EN_REASONED_NONE = (
     + _REASONED_CLOSE_NONE
 )
 
+# The top rung of the bandwidth ladder: no length cap, no structure, nothing
+# asked for except that the answer end where the parser can find it. Without
+# that one anchor the run cannot be scored at all, so it is not quite the
+# free-form exchange of published MAD -- the caption has to say so.
+STANCE_MINIMAL_EN_REASONED_FULL = (
+    "Use the other agents' responses as additional information and reconsider "
+    "your previous judgment.\n\n"
+    "The other agents' judgments are as follows:\n\n"
+    "{others}\n\n"
+    "Explain your reasoning in as much detail as you need, then answer on the "
+    "final line in exactly this format:\n"
+    + LABEL_LINE_EN
+    + "\nThe last line of your answer must begin with \"Final stance:\". Do not "
+    "stop before it."
+)
+
 STANCE_MINIMAL_EN_PROTOCOLS = {
+    "reasoned_exchange_full": (STANCE_MINIMAL_EN_REASONED_FULL,),
     "reasoned_exchange_anchored": (STANCE_MINIMAL_EN_REASONED_ANCHORED,),
     "reasoned_exchange_none": (STANCE_MINIMAL_EN_REASONED_NONE,),
     "evidence_gated": (STANCE_MINIMAL_EN_EVIDENCE_GATED,),

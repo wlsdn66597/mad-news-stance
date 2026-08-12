@@ -1,4 +1,5 @@
 """The self-refine control: same rounds, same calls, no peer signal."""
+import re
 import sys
 import types
 import unittest
@@ -92,6 +93,58 @@ class PeerModeTest(unittest.TestCase):
     def test_unknown_mode_is_refused(self):
         with self.assertRaises(ValueError):
             run("telepathy")
+
+
+class PeerThinkTest(unittest.TestCase):
+    """A model can reason at length and still tell its peers only the answer."""
+
+    def build(self, peer_think):
+        seen = []
+
+        def fake_chat(model, tokenizer, messages, max_new_tokens, temperature,
+                      enable_thinking):
+            seen.append(messages[-1]["content"])
+            return "<think>long private reasoning</think>Final stance: neutral"
+
+        # the module-level src.llm stub makes strip_think a no-op, and this
+        # class is about exactly what it removes
+        def real_strip(text):
+            return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+        with patch.object(debate, "chat", side_effect=fake_chat), \
+                patch.object(debate, "strip_think", real_strip):
+            trace = debate.run_debate(
+                object(),
+                FakeTokenizer(),
+                "the article",
+                debate_template="PEERS\n{others}",
+                n_agents=3,
+                n_rounds=2,
+                peer_think=peer_think,
+            )
+        return trace, seen
+
+    def test_strip_keeps_the_thinking_out_of_the_channel(self):
+        trace, seen = self.build("strip")
+        self.assertNotIn("long private reasoning", seen[-1])
+        self.assertEqual(trace["answers_by_round"][0][0], "Final stance: neutral")
+        self.assertIsNone(trace["peer_answers_by_round"])
+
+    def test_keep_hands_the_peers_the_reasoning(self):
+        trace, seen = self.build("keep")
+        self.assertIn("long private reasoning", seen[-1])
+        # what is stored and scored is unchanged either way
+        self.assertEqual(trace["answers_by_round"][0][0], "Final stance: neutral")
+        self.assertIn("long private reasoning",
+                      trace["peer_answers_by_round"][0][0])
+
+    def test_the_run_records_the_mode(self):
+        self.assertEqual(self.build("keep")[0]["peer_think"], "keep")
+        self.assertEqual(self.build("strip")[0]["peer_think"], "strip")
+
+    def test_unknown_mode_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.build("telepathy")
 
 
 if __name__ == "__main__":

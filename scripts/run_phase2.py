@@ -15,7 +15,7 @@ from transformers import set_seed
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import methods  # noqa: E402
-from src.debate import PEER_MODES  # noqa: E402
+from src.debate import PEER_MODES, PEER_THINK_MODES  # noqa: E402
 from src.prompts.stance import stance_personas  # noqa: E402
 from src.llm import load_model, model_context_window  # noqa: E402
 from src.metrics import LABELS_DEFAULT, format_report  # noqa: E402
@@ -69,6 +69,19 @@ def parse_args():
              "model to do all of it every round. Rounds, calls, personas and "
              "aggregation are identical either way, so the protocol is the only "
              "thing being compared.")
+    parser.add_argument(
+        "--peer-think", choices=list(PEER_THINK_MODES), default="strip",
+        help="a thinking model reasons inside <think> and strip_think removes "
+             "it before the answer is stored or handed on, so an agent can "
+             "reason at length and still send its peers only the conclusion. "
+             "'keep' hands the peers the reasoning as generated; the stored "
+             "answer stays stripped, so scoring is unchanged.")
+    parser.add_argument(
+        "--enable-thinking", choices=["auto", "on", "off"], default="auto",
+        help="'auto' keeps the historical behaviour -- off for qwen, model "
+             "default for everything else. Set it explicitly whenever two "
+             "models are being compared, because that default makes reasoning "
+             "mode a confound of model size.")
     parser.add_argument("--data-seed", type=int, default=None)
     parser.add_argument("--run-seed", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
@@ -102,6 +115,7 @@ def method_kwargs(method, cfg, args, temperature, initial_answers=None):
             kwargs["initial_answers"] = initial_answers
     if method == "debate":
         kwargs["peer_mode"] = args.peer_mode
+        kwargs["peer_think"] = args.peer_think
         kwargs["debate_protocol"] = args.debate_protocol
     if method in {"debate", "debate_memory"}:
         kwargs["n_agents"] = n_agents
@@ -179,7 +193,9 @@ def main():
         # a list here means one persona per agent; single and cot take the first
         system_prompt = stance_personas(n_agents)
         print(f"[personas] {len(system_prompt)} distinct agent roles", flush=True)
-    enable_thinking = False if args.model == "qwen" else None
+    enable_thinking = {"on": True, "off": False}.get(
+        args.enable_thinking, False if args.model == "qwen" else None
+    )
 
     print(
         f"[cfg] profile={profile} data_seed={data_seed} run_seed={run_seed} "
@@ -206,6 +222,8 @@ def main():
     tag = (
         ("_personas" if args.personas else "")
         + ("_selfrefine" if args.peer_mode == "self" else "")
+        + ("" if args.enable_thinking == "auto" else f"_think-{args.enable_thinking}")
+        + ("_peerthink" if args.peer_think == "keep" else "")
         + ("" if args.debate_protocol == "baseline" else f"_{args.debate_protocol}")
         + (f"_{args.tag}" if args.tag else "")
     )
@@ -227,6 +245,8 @@ def main():
         "prompt_profile": profile,
         "personas": bool(args.personas),
         "peer_mode": args.peer_mode,
+        "peer_think": args.peer_think,
+        "enable_thinking": enable_thinking,
         "debate_protocol": args.debate_protocol,
         "split": split,
         "n": n,

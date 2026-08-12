@@ -36,6 +36,13 @@ DEFAULT_MEMORY_DEBATE_TEMPLATE = (
 
 PEER_MODES = ("peers", "self")
 
+# A thinking model reasons inside <think>...</think>, and strip_think removes
+# that before the answer is stored or handed on -- so a model can reason at
+# length and still send its peers nothing but the conclusion. "keep" hands the
+# peers the reasoning as generated; the stored answer stays stripped either
+# way, so parsing and scoring do not change.
+PEER_THINK_MODES = ("strip", "keep")
+
 
 def format_others(other_answers):
     return "\n\n".join(f"[Agent {i + 1}]\n{ans}" for i, ans in enumerate(other_answers))
@@ -102,6 +109,7 @@ def run_debate(
     self_refine_template=None,
     debate_templates=None,
     debate_protocol="baseline",
+    peer_think="strip",
 ):
     if n_agents < 1:
         raise ValueError("n_agents must be at least 1")
@@ -115,6 +123,11 @@ def run_debate(
         # falling back to debate_template would tell the agent its own answer came
         # from someone else, which is the confound this control exists to remove
         raise ValueError("peer_mode='self' needs a self_refine_template")
+    if peer_think not in PEER_THINK_MODES:
+        raise ValueError(
+            f"unknown peer think mode: {peer_think}; "
+            f"choose one of {', '.join(PEER_THINK_MODES)}"
+        )
     if peer_mode == "self" and debate_templates is not None:
         # every protocol prompt talks about the other agents' judgments
         raise ValueError("peer_mode='self' cannot be combined with a debate protocol")
@@ -144,6 +157,9 @@ def run_debate(
         build_messages(question, system_prompt=prompt) for prompt in agent_prompts
     ]
     answers_by_round = []
+    # what the peers are handed, which is the stored answer unless the thinking
+    # is being passed on as well
+    peer_answers_by_round = []
     memory_by_round = []
     communication_stats_by_round = []
 
@@ -183,19 +199,21 @@ def run_debate(
             memory_by_round.append(memory_record)
 
         round_answers = []
+        peer_round_answers = []
         direct_contexts = []
         delivered_prompts = []
         for agent_index in range(n_agents):
             if round_index > 0:
+                source = peer_answers_by_round[round_index - 1]
                 if peer_mode == "self":
                     # same rounds, same generation count, no peer signal: this is
                     # the control that separates rereading from being told what
                     # someone else concluded
-                    others = [answers_by_round[round_index - 1][agent_index]]
+                    others = [source[agent_index]]
                     active_template = self_refine_template
                 else:
                     others = [
-                        answers_by_round[round_index - 1][other_index]
+                        source[other_index]
                         for other_index in range(n_agents)
                         if other_index != agent_index
                     ]
@@ -216,9 +234,11 @@ def run_debate(
                     {"role": "user", "content": debate_prompt}
                 )
             if round_index == 0 and initial_answers is not None:
-                reply = initial_answers[agent_index]
+                # a carried Round 0 was stored stripped, so its thinking is gone
+                # and cannot be passed on however peer_think is set
+                raw = reply = initial_answers[agent_index]
             else:
-                reply = chat(
+                raw = chat(
                     model,
                     tokenizer,
                     agent_contexts[agent_index],
@@ -226,12 +246,16 @@ def run_debate(
                     temperature=temperature,
                     enable_thinking=enable_thinking,
                 )
-                reply = strip_think(reply)
+                reply = strip_think(raw)
+            # the agent's own history stays stripped: what changes is only what
+            # the others get to read
             agent_contexts[agent_index].append(
                 {"role": "assistant", "content": reply}
             )
             round_answers.append(reply)
+            peer_round_answers.append(raw if peer_think == "keep" else reply)
         answers_by_round.append(round_answers)
+        peer_answers_by_round.append(peer_round_answers)
 
         direct_chars = [len(text) for text in direct_contexts]
         delivered_chars = [len(text) for text in delivered_prompts]
@@ -291,6 +315,7 @@ def run_debate(
         "n_agents": n_agents,
         "n_rounds": n_rounds,
         "peer_mode": peer_mode,
+        "peer_think": peer_think,
         "debate_protocol": debate_protocol,
         "round_templates": round_templates,
         "communication_mode": "shared_summary" if use_memory else "direct_concat",
@@ -323,6 +348,11 @@ def run_debate(
             "executed_generation_calls": executed_agent_generation_calls + memory_generation_calls,
         },
         "answers_by_round": answers_by_round,
+        # only when it differs from answers_by_round, so files do not double in
+        # size for every run that strips as usual
+        "peer_answers_by_round": (
+            peer_answers_by_round if peer_think == "keep" else None
+        ),
         "agent_contexts": agent_contexts,
         "memory_by_round": memory_by_round,
         "communication_stats_by_round": communication_stats_by_round,

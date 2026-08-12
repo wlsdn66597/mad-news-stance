@@ -264,6 +264,7 @@ def run_debate(
     initial_style="cot",
     peer_mode="peers",
     debate_protocol="baseline",
+    peer_think="strip",
 ):
     question = task.question(item, style=initial_style)
     paper_template = getattr(task, "paper_debate_template", None)
@@ -291,6 +292,7 @@ def run_debate(
             else getattr(task, "format_other_answers", None)
         ),
         peer_mode=peer_mode,
+        peer_think=peer_think,
         self_refine_template=getattr(task, "self_refine_template", None),
         debate_protocol=debate_protocol,
         debate_templates=(
