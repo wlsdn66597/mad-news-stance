@@ -238,9 +238,22 @@ def main():
         "some_agent_holds_gold": holds_gold,
     }
 
-    print("\n[distribution] gold  " + str(dict(Counter(gold))))
-    print("[distribution] final " + str(dict(Counter(final))))
-    report["distribution"] = {"gold": dict(Counter(gold)), "final": dict(Counter(final))}
+    # A protocol can hold accuracy while collapsing onto one class -- v1's
+    # counter-evidence round predicted neutral for almost everything, v2 for
+    # almost nothing -- so the predicted mix belongs next to the gold mix, with
+    # per-class recall to say which classes paid for it.
+    gold_counts, final_counts = Counter(gold), Counter(final)
+    prf = per_class_prf(final, gold, LABELS)
+    print(f"\n[labels] final round, against gold  (ties and parse failures are "
+          f"the {final_counts.get(None, 0)} with no label)")
+    print(f"  {'label':>13} {'gold':>6} {'predicted':>10} {'ratio':>7} "
+          f"{'recall':>7} {'precision':>10}")
+    for label in LABELS:
+        got, want = final_counts.get(label, 0), gold_counts.get(label, 0)
+        print(f"  {label:>13} {want:6d} {got:10d} {got / max(1, want):7.2f} "
+              f"{prf[label]['recall']:7.4f} {prf[label]['precision']:10.4f}")
+    report["distribution"] = {"gold": dict(gold_counts), "final": dict(final_counts),
+                              "per_class": prf}
 
     if args.compare:
         other = json.loads(Path(args.compare).read_text(encoding="utf-8"))

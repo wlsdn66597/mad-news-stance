@@ -389,6 +389,94 @@ STANCE_MINIMAL_EN_REASONED_EXCHANGE_V2 = (
     "stop before it."
 )
 
+# --------------------------------------------- what the channel should carry
+#
+# Only reasoned_exchange ever filled the channel. The four protocols above it
+# all asked for reasoning and all got the label alone: mean answer length by
+# round was 24/24/24/24 for the gate, 24/25/23/24 for round_specific, against
+# 24/96/88/87 once the format demand moved after the peers' answers. So neither
+# the gate nor the stage decomposition was ever exercised -- there was nothing
+# in the channel for a gate to weigh or a verification stage to check, and
+# their failures say only that those prompts did not change what agents emit.
+#
+# These three re-ask both questions on top of the format that works, and add
+# the length question the short form raises. reasoned_exchange is the control
+# for both axes: _long differs from it only in how much travels, the two _v3
+# protocols only in what the instruction asks for.
+_REASONED_CLOSE = (
+    "Answer with both of these lines, in this order and nothing else:\n"
+    "Evidence: <one sentence, quoting the wording in the article that decides "
+    "your judgment>\n"
+    + LABEL_LINE_EN
+    + "\nThe last line of your answer must begin with \"Final stance:\". Do not "
+    "stop before it."
+)
+
+# a quotation is a citation, not an argument: it does not say why the wording
+# was read that way, and confusing the article's own framing with a quoted
+# speaker's is the failure this task turns on
+STANCE_MINIMAL_EN_REASONED_LONG = (
+    "Use the other agents' responses as additional information and reconsider "
+    "your previous judgment.\n\n"
+    "The other agents' judgments are as follows:\n\n"
+    "{others}\n\n"
+    "Answer in this format, and nothing else:\n"
+    "Evidence: <quote the wording in the article that decides your judgment>\n"
+    "Reasoning: <2 to 3 sentences: whether that wording is the article's own "
+    "framing or a quoted speaker's, and where the other agents' readings "
+    "differ from yours>\n"
+    + LABEL_LINE_EN
+    + "\nThe last line of your answer must begin with \"Final stance:\". Do not "
+    "stop before it."
+)
+
+# the gate, now that there is something to gate on. "Do not change merely to
+# agree" is dropped: v1 and v2 both froze completely, and a bare prohibition is
+# the part a 1.2B can satisfy by never moving. What remains is the comparison
+# it was supposed to make.
+STANCE_MINIMAL_EN_EVIDENCE_GATED_V3 = (
+    "Use the other agents' responses as additional information and reconsider "
+    "your previous judgment.\n"
+    "Change your stance only when another agent's quoted wording is stronger "
+    "than the wording supporting your current judgment. Vote counts are not "
+    "evidence.\n\n"
+    "The other agents' judgments are as follows:\n\n"
+    "{others}\n\n"
+    + _REASONED_CLOSE
+)
+
+# the stages, now that each has something to work on. The v2 neutral clause is
+# deliberately left out: it moved neutral recall from 0.5507 to 0.0290, so its
+# effect is already known and including it would confound the stage question.
+STANCE_MINIMAL_EN_ROUND1_EVIDENCE_V3 = (
+    "Review the other agents' judgments.\n"
+    "Your only task in this round is to check their quoted wording against the "
+    "original article, and to quote the wording that decides your own "
+    "judgment.\n\n"
+    "The other agents' judgments are as follows:\n\n"
+    "{others}\n\n"
+    + _REASONED_CLOSE
+)
+
+STANCE_MINIMAL_EN_ROUND2_COUNTER_V3 = (
+    "Review the other agents' latest judgments.\n"
+    "Your only task in this round is to test your current stance against the "
+    "strongest competing wording quoted so far, and to say which of the two is "
+    "stronger.\n\n"
+    "The other agents' judgments are as follows:\n\n"
+    "{others}\n\n"
+    + _REASONED_CLOSE
+)
+
+STANCE_MINIMAL_EN_ROUND3_FINAL_V3 = (
+    "Make your final judgment using the wording quoted during the debate.\n"
+    "Do not look for new evidence in this round. Decide between the passages "
+    "already on the table.\n\n"
+    "The other agents' judgments are as follows:\n\n"
+    "{others}\n\n"
+    + _REASONED_CLOSE
+)
+
 STANCE_MINIMAL_EN_PROTOCOLS = {
     "evidence_gated": (STANCE_MINIMAL_EN_EVIDENCE_GATED,),
     "round_specific": (
@@ -398,6 +486,13 @@ STANCE_MINIMAL_EN_PROTOCOLS = {
     ),
     "reasoned_exchange": (STANCE_MINIMAL_EN_REASONED_EXCHANGE,),
     "reasoned_exchange_v2": (STANCE_MINIMAL_EN_REASONED_EXCHANGE_V2,),
+    "reasoned_exchange_long": (STANCE_MINIMAL_EN_REASONED_LONG,),
+    "evidence_gated_v3": (STANCE_MINIMAL_EN_EVIDENCE_GATED_V3,),
+    "round_specific_v3": (
+        STANCE_MINIMAL_EN_ROUND1_EVIDENCE_V3,
+        STANCE_MINIMAL_EN_ROUND2_COUNTER_V3,
+        STANCE_MINIMAL_EN_ROUND3_FINAL_V3,
+    ),
     "evidence_gated_v2": (STANCE_MINIMAL_EN_EVIDENCE_GATED_V2,),
     "round_specific_v2": (
         STANCE_MINIMAL_EN_ROUND1_EVIDENCE_V2,
