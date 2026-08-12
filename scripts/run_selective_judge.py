@@ -1,6 +1,7 @@
 ﻿"""Run a deterministic judge only on unstable saved debate trajectories."""
 import argparse
 import csv
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -56,6 +57,11 @@ def parse_args():
     parser.add_argument("--trust-remote-code", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--output-dir", default="results/selective_judge")
     return parser.parse_args()
+
+
+# ".items.json" and the longest sibling suffix still have to fit under the
+# 255-byte filename limit that ext4 enforces
+MAX_PREFIX_CHARS = 200
 
 
 def save_json(path, value):
@@ -134,6 +140,15 @@ def main():
         f"q4-{int(load_in_4bit)}_agg-{safe_name(args.aggregation_method)}_"
         f"a{meta.get('n_agents', 'x')}_r{meta.get('n_rounds', 'x')}"
     )
+    if len(prefix_name) > MAX_PREFIX_CHARS:
+        # a long source stem plus the full settings tail crosses the 255-byte
+        # filename limit and the run dies on save. Keep the head, which carries
+        # the source, the trigger, the input mode and the rounds, and let a
+        # digest of the whole thing keep the name unique. .config.json still
+        # records every setting. Shorter names are left exactly as they were, so
+        # nothing already on disk changes prefix or stops resuming.
+        digest = hashlib.sha1(prefix_name.encode("utf-8")).hexdigest()[:10]
+        prefix_name = f"{prefix_name[:MAX_PREFIX_CHARS - len(digest) - 1]}_{digest}"
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = output_dir / prefix_name
