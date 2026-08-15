@@ -101,6 +101,16 @@ def conditions(args, seed):
         "persona debate 4R": from_phase2(f"{base}_r4_personas.json", "debate"),
         # the control and the two protocols: same rounds, same calls, same
         # personas, so these rows are read against "persona debate 4R" alone
+        "persona majority F only": from_phase2(
+            f"{base}_r1_personas_only-foregrounding.json", "majority"),
+        "persona majority S only": from_phase2(
+            f"{base}_r1_personas_only-sourcing.json", "majority"),
+        "persona majority W only": from_phase2(
+            f"{base}_r1_personas_only-wording.json", "majority"),
+        "persona 4R evidence-only channel": from_phase2(
+            f"{base}_r4_personas_reasoned_exchange_evidence_only.json", "debate"),
+        "persona 4R memory debate": from_phase2(
+            f"{base}_r4_personas.json", "debate_memory"),
         "persona 4R self-refine": from_phase2(
             f"{base}_r4_personas_selfrefine.json", "debate"),
         "persona 4R evidence-gated": from_phase2(
@@ -166,7 +176,9 @@ def main():
 
     order = ["single", "majority k=3", "debate 2R", "debate 4R", "advocacy + judge",
              "persona majority", "persona debate 2R", "persona debate 4R",
-             "persona 4R self-refine", "persona 4R evidence-gated",
+             "persona majority F only", "persona majority S only",
+             "persona majority W only", "persona 4R evidence-only channel",
+             "persona 4R memory debate", "persona 4R self-refine", "persona 4R evidence-gated",
              "persona 4R round-specific", "persona 4R reasoned-exchange",
              "persona 4R reasoned-exchange v2",
              "persona 4R reasoned-exchange long",

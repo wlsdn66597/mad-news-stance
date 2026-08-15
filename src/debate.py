@@ -43,6 +43,24 @@ PEER_MODES = ("peers", "self")
 # way, so parsing and scoring do not change.
 PEER_THINK_MODES = ("strip", "keep")
 
+# What an agent is allowed to see of its peers. "full" is the published design.
+# "evidence_only" removes the answer line, leaving whatever reasoning the
+# message carries: the peers' article evidence still travels, but nobody can
+# count votes, so majority pressure has nothing to act on. Measured here,
+# unanimity climbs 595 -> 784 over four rounds while accuracy moves +12, and
+# recovering the dropped ballots pushed unanimity to 914 and accuracy down --
+# this cuts that channel instead of asking the model not to use it.
+PEER_CONTENT_MODES = ("full", "evidence_only")
+ANSWER_LINE_MARKERS = ("final stance", "최종 입장", "answer:", "prediction:")
+
+
+def hide_answer_line(text):
+    kept = [
+        line for line in str(text).splitlines()
+        if not line.strip().lower().startswith(ANSWER_LINE_MARKERS)
+    ]
+    return "\n".join(kept).strip()
+
 
 def format_others(other_answers):
     return "\n\n".join(f"[Agent {i + 1}]\n{ans}" for i, ans in enumerate(other_answers))
@@ -110,6 +128,7 @@ def run_debate(
     debate_templates=None,
     debate_protocol="baseline",
     peer_think="strip",
+    peer_content="full",
 ):
     if n_agents < 1:
         raise ValueError("n_agents must be at least 1")
@@ -123,6 +142,11 @@ def run_debate(
         # falling back to debate_template would tell the agent its own answer came
         # from someone else, which is the confound this control exists to remove
         raise ValueError("peer_mode='self' needs a self_refine_template")
+    if peer_content not in PEER_CONTENT_MODES:
+        raise ValueError(
+            f"unknown peer content mode: {peer_content}; "
+            f"choose one of {', '.join(PEER_CONTENT_MODES)}"
+        )
     if peer_think not in PEER_THINK_MODES:
         raise ValueError(
             f"unknown peer think mode: {peer_think}; "
@@ -220,6 +244,8 @@ def run_debate(
                     active_template = round_templates[
                         min(round_index - 1, len(round_templates) - 1)
                     ]
+                if peer_content == "evidence_only":
+                    others = [hide_answer_line(answer) for answer in others]
                 direct_context = other_answers_formatter(others)
                 direct_prompt = active_template.format(
                     others=direct_context, question=question
@@ -316,6 +342,7 @@ def run_debate(
         "n_rounds": n_rounds,
         "peer_mode": peer_mode,
         "peer_think": peer_think,
+        "peer_content": peer_content,
         "debate_protocol": debate_protocol,
         "round_templates": round_templates,
         "communication_mode": "shared_summary" if use_memory else "direct_concat",

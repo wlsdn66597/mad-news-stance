@@ -15,8 +15,8 @@ from transformers import set_seed
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import methods  # noqa: E402
-from src.debate import PEER_MODES, PEER_THINK_MODES  # noqa: E402
-from src.prompts.stance import stance_personas  # noqa: E402
+from src.debate import PEER_CONTENT_MODES, PEER_MODES, PEER_THINK_MODES  # noqa: E402
+from src.prompts.stance import PERSONA_MIXES, stance_personas  # noqa: E402
 from src.llm import load_model, model_context_window  # noqa: E402
 from src.metrics import LABELS_DEFAULT, format_report  # noqa: E402
 from src.prompts.stance import PROFILES  # noqa: E402
@@ -82,6 +82,17 @@ def parse_args():
              "default for everything else. Set it explicitly whenever two "
              "models are being compared, because that default makes reasoning "
              "mode a confound of model size.")
+    parser.add_argument(
+        "--peer-content", choices=list(PEER_CONTENT_MODES), default="full",
+        help="'evidence_only' drops the answer line from what the peers see, "
+             "so their article evidence still travels but nobody can count "
+             "votes. It cuts the channel majority pressure runs on instead of "
+             "instructing the model not to use it, which failed twice.")
+    parser.add_argument(
+        "--persona-mix", choices=list(PERSONA_MIXES), default="mixed",
+        help="'mixed' is one reading role each, the condition every persona "
+             "result so far used. The single-role mixes separate 'this prompt "
+             "is better' from 'the combination is what helps'.")
     parser.add_argument("--data-seed", type=int, default=None)
     parser.add_argument("--run-seed", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
@@ -116,6 +127,7 @@ def method_kwargs(method, cfg, args, temperature, initial_answers=None):
     if method == "debate":
         kwargs["peer_mode"] = args.peer_mode
         kwargs["peer_think"] = args.peer_think
+        kwargs["peer_content"] = args.peer_content
         kwargs["debate_protocol"] = args.debate_protocol
     if method in {"debate", "debate_memory"}:
         kwargs["n_agents"] = n_agents
@@ -191,7 +203,7 @@ def main():
     system_prompt = model_cfg.get("system_prompt")
     if args.personas:
         # a list here means one persona per agent; single and cot take the first
-        system_prompt = stance_personas(n_agents)
+        system_prompt = stance_personas(n_agents, mix=args.persona_mix)
         print(f"[personas] {len(system_prompt)} distinct agent roles", flush=True)
     enable_thinking = {"on": True, "off": False}.get(
         args.enable_thinking, False if args.model == "qwen" else None
@@ -224,6 +236,8 @@ def main():
         + ("_selfrefine" if args.peer_mode == "self" else "")
         + ("" if args.enable_thinking == "auto" else f"_think-{args.enable_thinking}")
         + ("_peerthink" if args.peer_think == "keep" else "")
+        + ("" if args.peer_content == "full" else f"_{args.peer_content}")
+        + ("" if args.persona_mix == "mixed" else f"_only-{args.persona_mix}")
         + ("" if args.debate_protocol == "baseline" else f"_{args.debate_protocol}")
         + (f"_{args.tag}" if args.tag else "")
     )
@@ -246,6 +260,8 @@ def main():
         "personas": bool(args.personas),
         "peer_mode": args.peer_mode,
         "peer_think": args.peer_think,
+        "peer_content": args.peer_content,
+        "persona_mix": args.persona_mix,
         "enable_thinking": enable_thinking,
         "debate_protocol": args.debate_protocol,
         "split": split,

@@ -147,5 +147,48 @@ class PeerThinkTest(unittest.TestCase):
             self.build("telepathy")
 
 
+
+
+class PeerContentTest(unittest.TestCase):
+    """Cut the channel majority pressure runs on, rather than forbid its use."""
+
+    def run_with(self, peer_content):
+        prompts = []
+
+        def fake_chat(model, tokenizer, messages, max_new_tokens, temperature,
+                      enable_thinking):
+            prompts.append(messages[-1]["content"])
+            return "Evidence: some quoted wording\nFinal stance: neutral"
+
+        with patch.object(debate, "chat", side_effect=fake_chat):
+            trace = debate.run_debate(
+                object(),
+                FakeTokenizer(),
+                "the article",
+                debate_template="PEERS\n{others}",
+                n_agents=3,
+                n_rounds=3,
+                peer_content=peer_content,
+            )
+        return trace, prompts
+
+    def test_full_shows_the_answer_line(self):
+        _, prompts = self.run_with("full")
+        self.assertIn("Final stance: neutral", prompts[-1])
+
+    def test_evidence_only_hides_it_and_keeps_the_evidence(self):
+        trace, prompts = self.run_with("evidence_only")
+        # round 2 peers come from round 1, which the fake model generated
+        self.assertNotIn("Final stance", prompts[-1])
+        self.assertIn("some quoted wording", prompts[-1])
+        # what is stored and scored is untouched
+        self.assertIn("Final stance: neutral", trace["answers_by_round"][-1][0])
+        self.assertEqual(trace["peer_content"], "evidence_only")
+
+    def test_unknown_mode_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.run_with("telepathy")
+
+
 if __name__ == "__main__":
     unittest.main()

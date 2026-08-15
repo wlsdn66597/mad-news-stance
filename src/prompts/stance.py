@@ -781,14 +781,27 @@ STANCE_PERSONAS = (
 )
 
 
-def stance_personas(n_agents, enabled=True):
+PERSONA_MIXES = ("mixed", "foregrounding", "sourcing", "wording")
+
+
+def stance_personas(n_agents, enabled=True, mix="mixed"):
     """One system prompt per agent, or None to keep the shared prompt.
 
     Returning None rather than a list of copies keeps the old runs bit-identical
     when personas are off.
+
+    `mix` names which reading roles the agents get. "mixed" is one of each, the
+    condition every persona result so far was measured under. The other three
+    repeat a single role, which separates "this one prompt is better than the
+    shared one" from "the combination of different readings is what helps" --
+    without them, a persona gain cannot be attributed to diversity at all.
     """
     if not enabled:
         return None
+    if mix not in PERSONA_MIXES:
+        raise ValueError(f"unknown persona mix: {mix}; choose one of {', '.join(PERSONA_MIXES)}")
+    if mix != "mixed":
+        return [STANCE_PERSONAS[PERSONA_MIXES.index(mix) - 1]] * n_agents
     if n_agents > len(STANCE_PERSONAS):
         raise ValueError(
             f"{n_agents} agents but only {len(STANCE_PERSONAS)} personas are defined"
