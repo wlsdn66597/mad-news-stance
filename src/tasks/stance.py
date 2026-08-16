@@ -27,6 +27,7 @@ class Stance(Task):
         self.prompt_profile_name = self.prompt_profile.name
         self.debate_template = self.prompt_profile.debate_template
         self.self_refine_template = self.prompt_profile.self_refine_template
+        self.reflection_template = self.prompt_profile.reflection_template
         self.debate_protocols = self.prompt_profile.debate_protocols or {}
         self.memory_summary_template = self.prompt_profile.memory_summary_template
         self.memory_debate_template = self.prompt_profile.memory_debate_template

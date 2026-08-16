@@ -19,6 +19,10 @@ class StancePromptProfile:
     cot_instruction: str
     vanilla_instruction: str
     debate_template: str
+    # the single-agent self-correction baseline: one agent, its own answer, no
+    # peers. Distinct from self_refine_template, which is the cost-matched
+    # control that runs three agents for as many rounds as the debate does.
+    reflection_template: Optional[str] = None
     # the self-refine control: the same round structure with the agent's own
     # previous answer in place of its peers'
     self_refine_template: Optional[str] = None
@@ -583,6 +587,20 @@ STANCE_MINIMAL_EN = StancePromptProfile(
         + "\n\nYour previous judgment is as follows:\n\n{others}"
     ),
     debate_protocols=STANCE_MINIMAL_EN_PROTOCOLS,
+    # Du et al.'s reflection baseline, worded for this task: re-check, and say
+    # so plainly if nothing changes
+    reflection_template=(
+        "Double check your judgment against the article. Reiterate or revise "
+        "it, and answer on the final line in exactly this format:\n\n"
+        + LABEL_LINE_EN
+    ),
+    # the generic summary prompt this profile fell back to says only "be
+    # concise and do not force consensus". These are the stance-specific ones
+    # from STANCE_V2_EN: they name the candidate labels, separate authorial
+    # framing from quoted speakers, and say to preserve minority evidence --
+    # which is the property the memory variant is being tested for.
+    memory_summary_template=STANCE_V2_EN.memory_summary_template,
+    memory_debate_template=STANCE_V2_EN.memory_debate_template,
     instruction_first=True,
     article_heading_en="Article",
     other_agent_template="Agent {index}:\n{answer}",

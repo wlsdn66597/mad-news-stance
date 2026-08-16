@@ -93,6 +93,7 @@ def conditions(args, seed):
             f"{args.profile}_d{args.data_seed}_s{seed}_a3")
     rows = {
         "single": from_phase2(f"{base}_r2.json", "single"),
+        "reflection": from_phase2(f"{base}_r2.json", "reflection"),
         "majority k=3": from_phase2(f"{base}_r2.json", "majority"),
         "debate 2R": from_phase2(f"{base}_r2.json", "debate"),
         "debate 4R": from_phase2(f"{base}_r4.json", "debate"),
@@ -111,6 +112,8 @@ def conditions(args, seed):
             f"{base}_r4_personas_reasoned_exchange_evidence_only.json", "debate"),
         "persona 4R memory debate": from_phase2(
             f"{base}_r4_personas.json", "debate_memory"),
+        "persona 4R memory debate (stance prompt)": from_phase2(
+            f"{base}_r4_personas_memprompt.json", "debate_memory"),
         "persona 4R self-refine": from_phase2(
             f"{base}_r4_personas_selfrefine.json", "debate"),
         "persona 4R evidence-gated": from_phase2(
@@ -174,11 +177,12 @@ def main():
         for name, row in conditions(args, seed).items():
             collected.setdefault(name, []).append(row)
 
-    order = ["single", "majority k=3", "debate 2R", "debate 4R", "advocacy + judge",
+    order = ["single", "reflection", "majority k=3", "debate 2R", "debate 4R", "advocacy + judge",
              "persona majority", "persona debate 2R", "persona debate 4R",
              "persona majority F only", "persona majority S only",
              "persona majority W only", "persona 4R evidence-only channel",
-             "persona 4R memory debate", "persona 4R self-refine", "persona 4R evidence-gated",
+             "persona 4R memory debate",
+             "persona 4R memory debate (stance prompt)", "persona 4R self-refine", "persona 4R evidence-gated",
              "persona 4R round-specific", "persona 4R reasoned-exchange",
              "persona 4R reasoned-exchange v2",
              "persona 4R reasoned-exchange long",

@@ -26,6 +26,7 @@ METHOD_FNS = {
     "single": methods.run_single,
     "vanilla": methods.run_vanilla,
     "cot": methods.run_cot,
+    "reflection": methods.run_reflection,
     "majority": methods.run_majority,
     "debate": methods.run_debate,
     "debate_memory": methods.run_debate_memory,

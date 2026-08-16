@@ -143,3 +143,34 @@ class AgentPersonaTest(unittest.TestCase):
             self.assertNotIn("argue", lowered)
             self.assertNotIn("supportive", lowered)
             self.assertNotIn("oppositional", lowered)
+
+
+class MinimalEnBaselineTemplatesTest(unittest.TestCase):
+    """The rows the plan's baseline column needs, and a fair memory test."""
+
+    def setUp(self):
+        from src.prompts.stance import PROFILES
+        self.profile = PROFILES["stance_minimal_en"]
+
+    def test_reflection_prompt_ends_where_the_parser_looks(self):
+        template = self.profile.reflection_template
+        self.assertIsNotNone(template)
+        self.assertTrue(template.rstrip().endswith(
+            "Final stance: <supportive|oppositional|neutral>"))
+
+    def test_memory_uses_the_stance_prompts_not_the_generic_fallback(self):
+        from src.prompts.stance import PROFILES
+        v2 = PROFILES["stance_v2_en"]
+        self.assertEqual(self.profile.memory_summary_template,
+                         v2.memory_summary_template)
+        self.assertEqual(self.profile.memory_debate_template,
+                         v2.memory_debate_template)
+        # the property the memory variant is being tested for
+        self.assertIn("Preserve minority evidence",
+                      self.profile.memory_summary_template)
+
+    def test_reflection_is_not_the_cost_matched_control(self):
+        # self_refine_template runs three agents for as many rounds as the
+        # debate; reflection is one agent checking itself once
+        self.assertNotEqual(self.profile.reflection_template,
+                            self.profile.self_refine_template)
