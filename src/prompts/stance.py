@@ -765,23 +765,88 @@ STANCE_V2_KO = StancePromptProfile(
 # same three-way question and still votes, so the aggregation and the parser are
 # unchanged; only what each agent attends to differs.
 
-STANCE_PERSONAS = (
-    "You are a news analyst who reads for narrative framing: which claims the "
-    "article foregrounds, what it puts in the headline and lead, what it leaves "
-    "to the end, and what it omits. Judge the article's stance from its own "
-    "construction.",
-    "You are a news analyst who reads for sourcing: who is quoted, in what "
-    "order, at what length, and whether the article endorses or distances "
-    "itself from what they say. An opinion a source holds is not the article's "
-    "stance unless the article adopts it.",
-    "You are a news analyst who reads for wording: the verbs, modifiers and "
-    "labels the journalist chooses when describing each side, and whether that "
-    "choice is evaluative or neutral. Judge the article's stance from its "
-    "language.",
+# Measured one role at a time over all 1001 test items, three agents each:
+#
+#   role           pool     majority   pairwise agree   neutral recall
+#   foregrounding  0.5175   0.4735     0.9018           0.1212
+#   sourcing       0.6294   0.5455     0.8495           0.3697
+#   wording        0.5804   0.5025     0.8385           0.4091
+#   all three      0.6543   0.5145     0.7203           0.3364
+#
+# Two things separate the roles. Sourcing is the only one carrying a decision
+# rule -- a quoted opinion is not the article's stance unless the article
+# adopts it -- while the others describe a reading habit and leave the decision
+# open. And foregrounding asks what the article emphasises or omits, a question
+# whose answer is always "something", so it almost never returns neutral (0.12)
+# and its three agents agree 90% of the time: correlated and wrong at once.
+#
+# The roles below follow from that. Each states what it looks at and what that
+# licenses concluding, and each can end in "the article takes no side", which
+# foregrounding structurally cannot.
+STANCE_PERSONA_ROLES = {
+    "foregrounding": (
+        "You are a news analyst who reads for narrative framing: which claims "
+        "the article foregrounds, what it puts in the headline and lead, what "
+        "it leaves to the end, and what it omits. Judge the article's stance "
+        "from its own construction."
+    ),
+    "sourcing": (
+        "You are a news analyst who reads for sourcing: who is quoted, in what "
+        "order, at what length, and whether the article endorses or distances "
+        "itself from what they say. An opinion a source holds is not the "
+        "article's stance unless the article adopts it."
+    ),
+    "wording": (
+        "You are a news analyst who reads for wording: the verbs, modifiers "
+        "and labels the journalist chooses when describing each side, and "
+        "whether that choice is evaluative or neutral. Judge the article's "
+        "stance from its language."
+    ),
+    # the positive test for neutral: no existing role is asked to detect
+    # balance, and neutral is the class balance defines
+    "balance": (
+        "You are a news analyst who reads for balance: whether both sides of "
+        "the issue appear, at comparable length and with comparable "
+        "legitimacy, and whether any sentence written by the journalist "
+        "endorses one of them. An article that lays out competing positions "
+        "without adopting one is neutral, however strongly its sources argue."
+    ),
+    # foregrounding made concrete: one comparison the article either passes or
+    # fails, instead of an open question about emphasis
+    "headline": (
+        "You are a news analyst who reads the headline and opening paragraphs "
+        "against the rest of the article: what it asserts up front, and "
+        "whether the body supports, qualifies or contradicts it. Headline and "
+        "lead framing is the article's own voice, not a quoted speaker's. If "
+        "the opening asserts nothing about the issue, say so."
+    ),
+    # binds the judgment to the stated issue rather than to overall tone, which
+    # is what the dataset actually asks
+    "issue": (
+        "You are a news analyst who restates the issue as a single claim and "
+        "asks what the article's own sentences say about that claim. Ignore "
+        "how strongly other topics are treated. If the article's own sentences "
+        "neither support nor reject the claim, its stance is neutral."
+    ),
+}
+
+# the historical trio, unchanged, so every result measured so far still names
+# the same three prompts
+STANCE_PERSONAS = tuple(
+    STANCE_PERSONA_ROLES[name] for name in ("foregrounding", "sourcing", "wording")
 )
 
 
-PERSONA_MIXES = ("mixed", "foregrounding", "sourcing", "wording")
+PERSONA_MIXES = ("mixed",) + tuple(STANCE_PERSONA_ROLES)
+
+
+def persona_mix_tag(mix):
+    """The filename fragment for a mix, empty for the historical trio."""
+    if mix == "mixed":
+        return ""
+    if "," in mix:
+        return "_mix-" + "-".join(part.strip() for part in mix.split(","))
+    return f"_only-{mix}"
 
 
 def stance_personas(n_agents, enabled=True, mix="mixed"):
@@ -798,10 +863,21 @@ def stance_personas(n_agents, enabled=True, mix="mixed"):
     """
     if not enabled:
         return None
+    if "," in mix:
+        names = [part.strip() for part in mix.split(",") if part.strip()]
+        unknown = [name for name in names if name not in STANCE_PERSONA_ROLES]
+        if unknown:
+            raise ValueError(
+                f"unknown persona roles: {', '.join(unknown)}; "
+                f"choose from {', '.join(STANCE_PERSONA_ROLES)}"
+            )
+        if len(names) != n_agents:
+            raise ValueError(f"{len(names)} roles given for {n_agents} agents")
+        return [STANCE_PERSONA_ROLES[name] for name in names]
     if mix not in PERSONA_MIXES:
         raise ValueError(f"unknown persona mix: {mix}; choose one of {', '.join(PERSONA_MIXES)}")
     if mix != "mixed":
-        return [STANCE_PERSONAS[PERSONA_MIXES.index(mix) - 1]] * n_agents
+        return [STANCE_PERSONA_ROLES[mix]] * n_agents
     if n_agents > len(STANCE_PERSONAS):
         raise ValueError(
             f"{n_agents} agents but only {len(STANCE_PERSONAS)} personas are defined"

@@ -16,7 +16,7 @@ from transformers import set_seed
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src import methods  # noqa: E402
 from src.debate import PEER_CONTENT_MODES, PEER_MODES, PEER_THINK_MODES  # noqa: E402
-from src.prompts.stance import PERSONA_MIXES, stance_personas  # noqa: E402
+from src.prompts.stance import PERSONA_MIXES, persona_mix_tag, stance_personas  # noqa: E402
 from src.llm import load_model, model_context_window  # noqa: E402
 from src.metrics import LABELS_DEFAULT, format_report  # noqa: E402
 from src.prompts.stance import PROFILES  # noqa: E402
@@ -89,10 +89,12 @@ def parse_args():
              "votes. It cuts the channel majority pressure runs on instead of "
              "instructing the model not to use it, which failed twice.")
     parser.add_argument(
-        "--persona-mix", choices=list(PERSONA_MIXES), default="mixed",
-        help="'mixed' is one reading role each, the condition every persona "
-             "result so far used. The single-role mixes separate 'this prompt "
-             "is better' from 'the combination is what helps'.")
+        "--persona-mix", default="mixed",
+        help="'mixed' is the historical trio (foregrounding, sourcing, "
+             "wording), which every persona result so far used. A single role "
+             "name repeats it across all agents, which separates 'this prompt "
+             "is better' from 'the combination is what helps'. A comma list "
+             f"gives one named role per agent. Roles: {', '.join(PERSONA_MIXES[1:])}")
     parser.add_argument("--data-seed", type=int, default=None)
     parser.add_argument("--run-seed", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
@@ -237,7 +239,7 @@ def main():
         + ("" if args.enable_thinking == "auto" else f"_think-{args.enable_thinking}")
         + ("_peerthink" if args.peer_think == "keep" else "")
         + ("" if args.peer_content == "full" else f"_{args.peer_content}")
-        + ("" if args.persona_mix == "mixed" else f"_only-{args.persona_mix}")
+        + persona_mix_tag(args.persona_mix)
         + ("" if args.debate_protocol == "baseline" else f"_{args.debate_protocol}")
         + (f"_{args.tag}" if args.tag else "")
     )
