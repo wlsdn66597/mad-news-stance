@@ -1,3 +1,8 @@
+> **STALE — 2026-08-15.** Start from [`docs/handoff_2026-08-15.md`](handoff_2026-08-15.md)
+> instead. Most numbers below are superseded and section 1's outline no longer matches
+> what the results support. Section 7 (traps) and section 8 (script map) are still
+> useful, and the newer file carries updated versions of both.
+
 # Report handoff: MAD on K-News-Stance
 
 Everything needed to continue from a clone. Repo `wlsdn66597/mad-news-stance`,
