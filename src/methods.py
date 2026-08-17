@@ -266,6 +266,7 @@ def run_debate(
     debate_protocol="baseline",
     peer_think="strip",
     peer_content="full",
+    self_refine_format="plain",
 ):
     question = task.question(item, style=initial_style)
     paper_template = getattr(task, "paper_debate_template", None)
@@ -295,7 +296,11 @@ def run_debate(
         peer_mode=peer_mode,
         peer_think=peer_think,
         peer_content=peer_content,
-        self_refine_template=getattr(task, "self_refine_template", None),
+        self_refine_template=(
+            getattr(task, "self_refine_reasoned_template", None)
+            if self_refine_format == "reasoned"
+            else getattr(task, "self_refine_template", None)
+        ),
         debate_protocol=debate_protocol,
         debate_templates=(
             None

@@ -26,6 +26,9 @@ class StancePromptProfile:
     # the self-refine control: the same round structure with the agent's own
     # previous answer in place of its peers'
     self_refine_template: Optional[str] = None
+    # the self-refine control in the evidence format the debate protocols use,
+    # so "peers" and "own earlier answer" can be compared at equal verbosity
+    self_refine_reasoned_template: Optional[str] = None
     # named alternatives to debate_template, each a tuple of one template per
     # exchange round (a single entry repeats for every round)
     debate_protocols: Optional[Dict[str, Tuple[str, ...]]] = None
@@ -524,7 +527,30 @@ STANCE_MINIMAL_EN_REASONED_FULL = (
     "stop before it."
 )
 
+# Every protocol so far told the agent to "use the other agents' responses" and
+# left it free to ignore them, which self-refine shows it effectively does:
+# 0.5275 without peers against 0.5265 with them. This one makes the peers'
+# contribution a required field, so an agent cannot produce a well-formed answer
+# without having read them, and the NONE case is recorded rather than hidden --
+# the share of items where a peer contributed nothing is then measurable, which
+# no earlier protocol could report.
+STANCE_MINIMAL_EN_PEER_EVIDENCE = (
+    "Use the other agents' responses as additional information and reconsider "
+    "your previous judgment.\n\n"
+    "The other agents' judgments are as follows:\n\n"
+    "{others}\n\n"
+    "Answer with all three of these lines, in this order and nothing else:\n"
+    "New from others: <the wording another agent quoted that you had not "
+    "considered, or NONE>\n"
+    "Evidence: <one sentence, quoting the wording in the article that decides "
+    "your judgment>\n"
+    + LABEL_LINE_EN
+    + "\nThe last line of your answer must begin with \"Final stance:\". Do not "
+    "stop before it."
+)
+
 STANCE_MINIMAL_EN_PROTOCOLS = {
+    "peer_evidence": (STANCE_MINIMAL_EN_PEER_EVIDENCE,),
     "reasoned_exchange_full": (STANCE_MINIMAL_EN_REASONED_FULL,),
     "reasoned_exchange_anchored": (STANCE_MINIMAL_EN_REASONED_ANCHORED,),
     "reasoned_exchange_none": (STANCE_MINIMAL_EN_REASONED_NONE,),
@@ -585,6 +611,17 @@ STANCE_MINIMAL_EN = StancePromptProfile(
         "this format:\n\n"
         + LABEL_LINE_EN
         + "\n\nYour previous judgment is as follows:\n\n{others}"
+    ),
+    # reasoned_exchange scores 0.5395 and the plain self-refine control 0.5275,
+    # but the two are not comparable: the first writes a quoted sentence every
+    # round and the second writes the bare label, so the difference could be
+    # the format rather than the peers. This is the control at the same format.
+    self_refine_reasoned_template=(
+        "Use your own earlier response as additional information and reconsider "
+        "your previous judgment.\n\n"
+        "Your previous judgment is as follows:\n\n"
+        "{others}\n\n"
+        + _REASONED_CLOSE
     ),
     debate_protocols=STANCE_MINIMAL_EN_PROTOCOLS,
     # Du et al.'s reflection baseline, worded for this task: re-check, and say
@@ -903,6 +940,28 @@ def stance_personas(n_agents, enabled=True, mix="mixed"):
     return list(STANCE_PERSONAS[:n_agents])
 
 
+# Round 0 answers are 24 characters, the length of "Final stance: supportive",
+# in every condition measured. So the judge that picks the final label is shown
+# three votes and the article -- the same empty channel the debate had, one
+# stage later. This profile puts the format demand after the article and
+# anchors the closing line, the change that took label-only output from 95% to
+# 0.5% in the exchange, so that Round 0 carries a quoted passage instead.
+STANCE_EVIDENCE_EN = replace(
+    STANCE_MINIMAL_EN,
+    name="stance_evidence_en",
+    cot_instruction=(
+        "Classify this article's stance toward the specified issue as one of "
+        "supportive, oppositional, or neutral.\n\n"
+        "Answer with both of these lines, in this order and nothing else:\n"
+        "Evidence: <one sentence, quoting the wording in the article that "
+        "decides your judgment>\n"
+        + LABEL_LINE_EN
+        + "\nThe last line of your answer must begin with \"Final stance:\". Do "
+        "not stop before it."
+    ),
+)
+
+
 PROFILES = {
     profile.name: profile
     for profile in (
@@ -910,6 +969,7 @@ PROFILES = {
         STANCE_V2_EN,
         STANCE_V2_EN_GENERIC_MEMORY,
         STANCE_MINIMAL_EN,
+        STANCE_EVIDENCE_EN,
         STANCE_TWOSTEP_EN,
         STANCE_GATE_EN,
         STANCE_V2_KO,

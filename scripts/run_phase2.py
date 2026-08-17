@@ -96,6 +96,12 @@ def parse_args():
              "name repeats it across all agents, which separates 'this prompt "
              "is better' from 'the combination is what helps'. A comma list "
              f"gives one named role per agent. Roles: {', '.join(PERSONA_MIXES[1:])}")
+    parser.add_argument(
+        "--self-refine-format", choices=["plain", "reasoned"], default="plain",
+        help="'reasoned' runs the self-refine control in the same two-line "
+             "evidence format the debate protocols use. Without it the control "
+             "writes a bare label while the debate writes a quoted sentence, "
+             "so their difference could be the format rather than the peers.")
     parser.add_argument("--data-seed", type=int, default=None)
     parser.add_argument("--run-seed", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
@@ -131,6 +137,7 @@ def method_kwargs(method, cfg, args, temperature, initial_answers=None):
         kwargs["peer_mode"] = args.peer_mode
         kwargs["peer_think"] = args.peer_think
         kwargs["peer_content"] = args.peer_content
+        kwargs["self_refine_format"] = args.self_refine_format
         kwargs["debate_protocol"] = args.debate_protocol
     if method in {"debate", "debate_memory"}:
         kwargs["n_agents"] = n_agents
@@ -236,7 +243,9 @@ def main():
     # on the same file
     tag = (
         ("_personas" if args.personas else "")
-        + ("_selfrefine" if args.peer_mode == "self" else "")
+        + ("" if args.peer_mode != "self"
+           else "_selfrefine" if args.self_refine_format == "plain"
+           else "_selfrefine-reasoned")
         + ("" if args.enable_thinking == "auto" else f"_think-{args.enable_thinking}")
         + ("_peerthink" if args.peer_think == "keep" else "")
         + ("" if args.peer_content == "full" else f"_{args.peer_content}")

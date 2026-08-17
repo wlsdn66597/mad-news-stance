@@ -114,6 +114,10 @@ def conditions(args, seed):
             f"{base}_r4_personas.json", "debate_memory"),
         "persona 4R memory debate (stance prompt)": from_phase2(
             f"{base}_r4_personas_memprompt.json", "debate_memory"),
+        "persona 4R self-refine (reasoned)": from_phase2(
+            f"{base}_r4_personas_selfrefine-reasoned.json", "debate"),
+        "persona 4R peer-evidence": from_phase2(
+            f"{base}_r4_personas_peer_evidence.json", "debate"),
         "persona 4R self-refine": from_phase2(
             f"{base}_r4_personas_selfrefine.json", "debate"),
         "persona 4R evidence-gated": from_phase2(
@@ -182,7 +186,9 @@ def main():
              "persona majority F only", "persona majority S only",
              "persona majority W only", "persona 4R evidence-only channel",
              "persona 4R memory debate",
-             "persona 4R memory debate (stance prompt)", "persona 4R self-refine", "persona 4R evidence-gated",
+             "persona 4R memory debate (stance prompt)",
+             "persona 4R self-refine", "persona 4R self-refine (reasoned)",
+             "persona 4R peer-evidence", "persona 4R evidence-gated",
              "persona 4R round-specific", "persona 4R reasoned-exchange",
              "persona 4R reasoned-exchange v2",
              "persona 4R reasoned-exchange long",
