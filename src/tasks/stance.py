@@ -30,6 +30,8 @@ class Stance(Task):
         self.reflection_template = self.prompt_profile.reflection_template
         self.self_refine_reasoned_template = (
             self.prompt_profile.self_refine_reasoned_template)
+        self.self_refine_full_template = (
+            self.prompt_profile.self_refine_full_template)
         self.debate_protocols = self.prompt_profile.debate_protocols or {}
         self.memory_summary_template = self.prompt_profile.memory_summary_template
         self.memory_debate_template = self.prompt_profile.memory_debate_template

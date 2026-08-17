@@ -97,11 +97,14 @@ def parse_args():
              "is better' from 'the combination is what helps'. A comma list "
              f"gives one named role per agent. Roles: {', '.join(PERSONA_MIXES[1:])}")
     parser.add_argument(
-        "--self-refine-format", choices=["plain", "reasoned"], default="plain",
-        help="'reasoned' runs the self-refine control in the same two-line "
-             "evidence format the debate protocols use. Without it the control "
-             "writes a bare label while the debate writes a quoted sentence, "
-             "so their difference could be the format rather than the peers.")
+        "--self-refine-format", choices=["plain", "reasoned", "full"],
+        default="plain",
+        help="which format the self-refine control writes in. The control has "
+             "to match the debate it is a control for: 'plain' pairs with the "
+             "baseline template, 'reasoned' with reasoned_exchange, 'full' "
+             "with reasoned_exchange_full, which at 0.5514 is the best debate "
+             "without a judge. Mismatched, the comparison measures the format "
+             "rather than the peers.")
     parser.add_argument("--data-seed", type=int, default=None)
     parser.add_argument("--run-seed", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
@@ -245,7 +248,7 @@ def main():
         ("_personas" if args.personas else "")
         + ("" if args.peer_mode != "self"
            else "_selfrefine" if args.self_refine_format == "plain"
-           else "_selfrefine-reasoned")
+           else f"_selfrefine-{args.self_refine_format}")
         + ("" if args.enable_thinking == "auto" else f"_think-{args.enable_thinking}")
         + ("_peerthink" if args.peer_think == "keep" else "")
         + ("" if args.peer_content == "full" else f"_{args.peer_content}")

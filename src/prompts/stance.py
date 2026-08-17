@@ -29,6 +29,8 @@ class StancePromptProfile:
     # the self-refine control in the evidence format the debate protocols use,
     # so "peers" and "own earlier answer" can be compared at equal verbosity
     self_refine_reasoned_template: Optional[str] = None
+    # and at the free-form length, which is where the debate scores best
+    self_refine_full_template: Optional[str] = None
     # named alternatives to debate_template, each a tuple of one template per
     # exchange round (a single entry repeats for every round)
     debate_protocols: Optional[Dict[str, Tuple[str, ...]]] = None
@@ -622,6 +624,21 @@ STANCE_MINIMAL_EN = StancePromptProfile(
         "Your previous judgment is as follows:\n\n"
         "{others}\n\n"
         + _REASONED_CLOSE
+    ),
+    # the control for reasoned_exchange_full, which at 0.5514 is the best
+    # debate condition without a judge. Whether the peers matter has to be
+    # asked at the setting where the debate is strongest, and every existing
+    # self-refine run writes a shorter answer than that debate does.
+    self_refine_full_template=(
+        "Use your own earlier response as additional information and reconsider "
+        "your previous judgment.\n\n"
+        "Your previous judgment is as follows:\n\n"
+        "{others}\n\n"
+        "Explain your reasoning in as much detail as you need, then answer on "
+        "the final line in exactly this format:\n"
+        + LABEL_LINE_EN
+        + "\nThe last line of your answer must begin with \"Final stance:\". Do "
+        "not stop before it."
     ),
     debate_protocols=STANCE_MINIMAL_EN_PROTOCOLS,
     # Du et al.'s reflection baseline, worded for this task: re-check, and say
