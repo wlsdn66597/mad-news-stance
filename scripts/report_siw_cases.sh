@@ -23,10 +23,22 @@ CASES="${CASES:-5}"
 CHARS="${CHARS:-900}"
 
 B="results/phase2/stance_${MODEL}_${SPLIT}_n${N}_${PROFILE}_d${DATA_SEED}_s${SEED}_a3"
-MAJ="${B}_r1_personas_mix-${MIX}.json"
-SELF="${B}_r4_personas_selfrefine-full_mix-${MIX}.json"
-FULL="${B}_r4_personas_mix-${MIX}_reasoned_exchange_full.json"
-JUDGE_R0="results/judge_mix_${MIX}"
+# the historical trio carries no mix tag, so its five conditions live under
+# different names; everything downstream is identical
+if [ "$MIX" = "mixed" ] || [ "$MIX" = "fsw" ]; then
+  MAJ="${B}_r1_personas.json"
+  SELF="${B}_r4_personas_selfrefine-full.json"
+  FULL="${B}_r4_personas_reasoned_exchange_full.json"
+else
+  MAJ="${B}_r1_personas_mix-${MIX}.json"
+  SELF="${B}_r4_personas_selfrefine-full_mix-${MIX}.json"
+  FULL="${B}_r4_personas_mix-${MIX}_reasoned_exchange_full.json"
+fi
+if [ "$MIX" = "mixed" ] || [ "$MIX" = "fsw" ]; then
+  JUDGE_R0="results/judge_round0_only"
+else
+  JUDGE_R0="results/judge_mix_${MIX}"
+fi
 
 OUT="docs/results_${MODEL}_s${SEED}_${MIX}.md"
 mkdir -p docs

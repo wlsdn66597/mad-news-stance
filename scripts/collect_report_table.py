@@ -109,7 +109,7 @@ def conditions(args, seed):
         "persona majority W only": from_phase2(
             f"{base}_r1_personas_only-wording.json", "majority"),
         "persona 4R evidence-only channel": from_phase2(
-            f"{base}_r4_personas_reasoned_exchange_evidence_only.json", "debate"),
+            f"{base}_r4_personas_evidence_only_reasoned_exchange.json", "debate"),
         "persona 4R memory debate": from_phase2(
             f"{base}_r4_personas.json", "debate_memory"),
         "persona 4R memory debate (stance prompt)": from_phase2(
