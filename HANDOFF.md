@@ -415,11 +415,12 @@ compute-matched `majority k=12`. Roughly 18 GPU-hours; status unknown.
 | `src/debate.py`, `src/methods.py` | Du et al. debate and the single/majority/debate methods |
 | `src/selective_judge.py`, `src/consensus.py` | article-only judge, instability trigger, metrics |
 | `scripts/analyze_rounds.py` | per-round transitions, agreement × accuracy, judge trigger counts |
+| `scripts/analyze_advocacy_rounds.py` | offline. What the rebuttal round does to the cases: the ballot, homogenisation, grounding, truncation |
 | `scripts/compare_methods.py` | paired McNemar across files, reads phase2 and judge items |
 | `docs/stance_advocacy.md` | design rationale and the failures already diagnosed |
 | `docs/selective_judge.md` | the earlier selective-judge pipeline |
 
-Tests: `python -m unittest tests.test_advocacy tests.test_selective_judge tests.test_consensus tests.test_selective_consensus`
+Tests: `python -m unittest tests.test_advocacy tests.test_advocacy_rounds tests.test_selective_judge tests.test_consensus tests.test_selective_consensus`
 
 ---
 

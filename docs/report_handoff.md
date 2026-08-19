@@ -237,10 +237,11 @@ only confirmatory test. Say so.
 | `analyze_when_debate_helps.py` | no | paired comparison split by four conditions |
 | `analyze_consensus_shift.py` | no | what the extra rounds talk into agreement |
 | `advocacy_oracle.py` | no | case separability, quote grounding audit |
+| `analyze_advocacy_rounds.py` | no | what the rebuttal round does: the ballot, homogenisation, grounding, truncation |
 | `simulate_routing.py` | no | is the trigger a good router, vs random and oracle |
 | `analyze_selective_runs.py` | no | ablation comparison, gates, per-item ceiling |
 | `analyze_neutral_abstention.py` | no | neutral as abstention, two-stage decomposition |
 
-Tests: `python -m unittest tests.test_advocacy tests.test_selective_advocacy
-tests.test_selective_judge tests.test_consensus tests.test_selective_consensus
-tests.test_stance_prompt_profiles`
+Tests: `python -m unittest tests.test_advocacy tests.test_advocacy_rounds
+tests.test_selective_advocacy tests.test_selective_judge tests.test_consensus
+tests.test_selective_consensus tests.test_stance_prompt_profiles`

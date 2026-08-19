@@ -275,6 +275,50 @@ python scripts/advocacy_oracle.py results/advocacy/<run>.items.json --round 0
 If no feature beats chance and the judge agrees with none of them, the cases
 carry no recoverable signal and no judge change will help.
 
+## What the rebuttal round changes
+
+The oracle asks whether one round's cases are separable. It does not say what
+the exchange did to them, and "round 0 is worth +19 items" is a result without a
+mechanism. `scripts/analyze_advocacy_rounds.py` reads the same
+`.items.json` — `analyses_by_round` is saved in full — and reports the four
+things that could produce the loss, per round:
+
+- **the ballot.** Advocacy's whole justification is that gold is argued on every
+  item, and that holds by construction at round 0 only. If the advocate assigned
+  gold concedes during the rebuttal, gold leaves the candidate set and the loss
+  is upstream of the judge. Concession is read the strict way `compliance` reads
+  it, and the gold advocate's hold rate is reported against the other two
+  advocates' on the same items, so a general fall in compliance is not mistaken
+  for a directional one. The round-0 → last comparison is paired on the same
+  advocates (exact McNemar), because an unpaired rate hides advocates conceding
+  and recanting in equal numbers.
+- **homogenisation.** Pairwise token overlap, shared quoted passages and
+  verbatim sentence reuse between the three cases. This is the quantity that
+  made `single` and `majority k=3` identical for the free-form ensemble, asked
+  of the advocacy cases: if the rebuttal makes them converge, no judge can
+  separate them whatever it reads.
+- **grounding.** With `--data-path`, quote verification at three strictnesses
+  plus the share of each case's own character shingles that appear in the
+  article, so "the agents stop arguing about the article" becomes a number
+  rather than a peer-mention count.
+- **truncation.** A round-1 prompt carries the article, the agent's own turn and
+  two peer cases, so the shorter round-1 output (1187 vs 1489 chars) could be
+  convergence or could be the budget running out. Cases that end without
+  sentence-final punctuation are counted as a proxy — the closing
+  `Final stance:` line is dropped before the test, since it carries no
+  punctuation and flags every compliant case otherwise. It is only a proxy; the
+  real check needs the tokenizer and is `scripts/check_context.py`.
+
+The judge section splits the judged round's accuracy by whether the gold
+advocate still held, counts how often the judge picked a case that had conceded,
+and reports the items where gold was off the ballot entirely.
+
+```bash
+python scripts/analyze_advocacy_rounds.py results/advocacy/<run>.items.json \
+  --data-path data/k-news-stance_nosegment.json \
+  --json results/advocacy/<run>.rounds.json
+```
+
 ## Selective advocacy: keep the vote, commission only what is missing
 
 `src/selective_advocacy.py` + `scripts/run_selective_advocacy.py`.
