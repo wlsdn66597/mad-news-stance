@@ -239,6 +239,7 @@ def judged_round_of(row):
 def round_report(rows, round_index, articles, min_sentence):
     """Everything measurable about one round's three cases."""
     chars, quotes, hedges, peers, unfinished = [], [], [], [], []
+    declared = mention_only = mention_differs = 0
     held_gold = held_gold_n = held_other = held_other_n = 0
     ballot_gold = 0
     ballot_size = Counter()
@@ -259,6 +260,17 @@ def round_report(rows, round_index, articles, min_sentence):
             hedges.append(float(sum(lowered.count(cue) for cue in HEDGES)))
             peers.append(float(len(PEER_PATTERN.findall(text or ""))))
             unfinished.append(looks_unfinished(text))
+
+        # the hold rate is only interpretable against this: if no advocate ever
+        # writes a "Final stance:" line, nothing can be counted as conceding and
+        # a hold rate of 1.0 says nothing at all
+        for text, stance in zip(analyses, stances):
+            label, source = stated_label(text)
+            if source == "marker":
+                declared += 1
+            elif source == "mention":
+                mention_only += 1
+                mention_differs += label != stance
 
         for (held, _), stance in zip(flags, stances):
             if stance == gold:
@@ -309,6 +321,9 @@ def round_report(rows, round_index, articles, min_sentence):
         "peer_mentions": mean(peers),
         "peer_to_quote": (peer_total / quote_total) if quote_total else None,
         "unfinished_rate": sum(unfinished) / len(unfinished) if unfinished else None,
+        "declared_label": declared,
+        "last_mention_only": mention_only,
+        "last_mention_differs": mention_differs,
         "gold_advocate_held": held_gold,
         "gold_advocate_n": held_gold_n,
         "other_advocate_held": held_other,
@@ -453,17 +468,27 @@ def print_report(report, articles):
 
     print("\n[the ballot] is the gold label still being argued?  "
           "(coverage, in analyze_information_flow's words)")
-    print(f"  {'round':>5} {'gold adv held':>14} {'others held':>13} {'gap p':>8} "
-          f"{'coverage':>15} {'3 lbl':>6} {'2 lbl':>6} {'1 lbl':>6}")
+    print(f"  {'round':>5} {'declared':>9} {'gold adv held':>14} {'others held':>13} "
+          f"{'gap p':>8} {'coverage':>15} {'3 lbl':>6} {'2 lbl':>6} {'1 lbl':>6}")
     for row in report["per_round"]:
         sizes = row["ballot_sizes"]
         gap = row["hold_gap_p"]
         print(f"  {row['round']:>5} "
+              f"{rate(row['declared_label'], row['cases']):>9} "
               f"{rate(row['gold_advocate_held'], row['gold_advocate_n']):>14} "
               f"{rate(row['other_advocate_held'], row['other_advocate_n']):>13} "
               f"{show(gap, '8.4f')} "
               f"{rate(row['ballot_has_gold'], report['items']):>15} "
               f"{sizes.get(3, 0):6d} {sizes.get(2, 0):6d} {sizes.get(1, 0):6d}")
+    print("  `declared` is the share of cases carrying an explicit "
+          "\"Final stance:\" line. Nothing can be counted as conceding without "
+          "one, so a hold rate of 1.0 next to a `declared` near zero means the "
+          "test never ran, not that the advocates were loyal.")
+    for row in report["per_round"]:
+        if row["last_mention_only"]:
+            print(f"  round {row['round']}: no marker on {row['last_mention_only']} cases, "
+                  f"of which {row['last_mention_differs']} end on a label other than "
+                  f"the assigned one (a weaker signal, not a defection)")
     paired = report["ballot_paired"]
     if paired:
         print(f"  paired, same gold advocates: held {paired['held_first']} -> "

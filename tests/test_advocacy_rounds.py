@@ -85,6 +85,19 @@ class BallotTest(unittest.TestCase):
         # directional rather than a general fall in compliance
         self.assertEqual(last["other_advocate_held"], last["other_advocate_n"])
 
+    def test_the_declaration_count_says_whether_the_test_could_run(self):
+        # a hold rate of 1.0 means nothing if no case carries a marker, so the
+        # denominator has to be reported next to it
+        stances = ["supportive", "neutral", "oppositional"]
+        silent = [row("1", "neutral", stances, [[case(s) for s in stances]])]
+        report = MODULE.round_report(silent, 0, {}, 20)
+        self.assertEqual(report["declared_label"], 0)
+        self.assertEqual(report["gold_advocate_held"], report["gold_advocate_n"])
+        self.assertEqual(report["last_mention_only"], 3)
+
+        loud = MODULE.round_report(self.rows, 0, {}, 20)
+        self.assertEqual(loud["declared_label"], loud["cases"])
+
     def test_paired_comparison_separates_conceding_from_recanting(self):
         paired = MODULE.ballot_paired(self.rows, 0, 1)
         self.assertEqual(paired["items"], 2)
