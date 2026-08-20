@@ -14,6 +14,14 @@ disagreed at round 0 and the exchange landed on the gold label. That is
 fixed` narrows it further to items a baseline got wrong, which needs
 `--before`.
 
+For the opposite case -- what an exchange destroys -- `--pick gold_lost` finds
+items where an agent named the gold label at round 0 and none still held it at
+the end, and `--pick unanimous_wrong` finds the ones the agents agreed on and
+got wrong. Under the published template those are the same failure seen twice:
+87% of what an agent hands its peers is a label line, so the exchange carries
+votes rather than reasons and a correct minority is outnumbered rather than
+answered.
+
     python scripts/dump_agent_context.py results/phase2/<run>.json
     python scripts/dump_agent_context.py results/phase2/<run>.json --item 412 --agent 0
     python scripts/dump_agent_context.py results/phase2/<run>.json \
@@ -28,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.consensus import LABELS, parse_stance  # noqa: E402
 
-PICKS = ("split_then_correct", "fixed", "unanimous_wrong", "any")
+PICKS = ("split_then_correct", "fixed", "gold_lost", "unanimous_wrong", "any")
 
 
 def parse_args():
@@ -84,6 +92,15 @@ def matching(block, before, pick):
             keys.append(key)
         elif pick == "split_then_correct":
             if len(set(first)) > 1 and pred == gold:
+                keys.append(key)
+        elif pick == "gold_lost":
+            # someone had the answer at round 0 and the exchange talked it away.
+            # This is the failure the published template produces: 87% of what
+            # an agent hands its peers is a label line, so the exchange carries
+            # votes rather than reasons and the minority is outnumbered rather
+            # than answered.
+            final = round_labels(item, len(rounds_of(item)) - 1)
+            if gold in first and gold not in final:
                 keys.append(key)
         elif pick == "unanimous_wrong":
             final = round_labels(item, len(rounds_of(item)) - 1)
