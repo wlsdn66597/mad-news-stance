@@ -90,6 +90,15 @@ def parse_args():
              "votes. It cuts the channel majority pressure runs on instead of "
              "instructing the model not to use it, which failed twice.")
     parser.add_argument(
+        "--segment-labels",
+        help="a JOA-ICL prediction file (title_joa_icl / main_body_joa_icl), "
+             "which replaces each article with the same text carrying a "
+             "predicted stance on its headline, lead, conclusion and "
+             "quotations. Only the text changes: the issue and the gold label "
+             "still come from the dataset, the item ids are unchanged, so the "
+             "run stays paired with the plain-article one. Every method works "
+             "on it, and the prompt gains one sentence explaining the tags.")
+    parser.add_argument(
         "--persona-mix", default="mixed",
         help="'mixed' is the historical trio (foregrounding, sourcing, "
              "wording), which every persona result so far used. A single role "
@@ -193,7 +202,11 @@ def main():
     if share_round0 and (args.k or cfg["majority"]["k"]) != n_agents:
         raise ValueError("shared Round 0 requires majority.k == debate.n_agents")
 
-    task = Stance(cfg["data_path"], prompt_profile=profile)
+    task = Stance(
+        cfg["data_path"],
+        prompt_profile=profile,
+        segment_labels_path=args.segment_labels,
+    )
     # cheaper to hear all of this now than after the weights are on the GPU
     if args.peer_mode == "self" and not task.self_refine_template:
         sys.exit(f"profile {profile} has no self_refine_template; --peer-mode self needs one")
@@ -245,7 +258,10 @@ def main():
     # personas and the self-refine control change the run, so they must not land
     # on the same file
     tag = (
-        ("_personas" if args.personas else "")
+        # first, because it changes the input rather than the method: a reader
+        # scanning filenames has to see it before anything else
+        ("_joa-icl" if args.segment_labels else "")
+        + ("_personas" if args.personas else "")
         + ("" if args.peer_mode != "self"
            else "_selfrefine" if args.self_refine_format == "plain"
            else f"_selfrefine-{args.self_refine_format}")
@@ -277,6 +293,7 @@ def main():
         "peer_think": args.peer_think,
         "peer_content": args.peer_content,
         "persona_mix": args.persona_mix,
+        "segment_labels": args.segment_labels,
         "enable_thinking": enable_thinking,
         "debate_protocol": args.debate_protocol,
         "split": split,

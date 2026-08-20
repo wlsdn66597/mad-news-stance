@@ -39,18 +39,40 @@ class StancePromptProfile:
     instruction_first: bool = False
     article_heading_en: str = "Article (Korean)"
     other_agent_template: str = "[Agent {index}]\n{answer}"
+    # JOA-ICL (Lee et al., 2025) hands the model an article whose headline,
+    # lead, conclusion and direct quotations carry a predicted stance in an
+    # XML-like attribute. Without a sentence saying what those attributes are,
+    # the model sees markup it was never told to read, which would understate
+    # the method rather than test it. Only added when the item actually carries
+    # the labels, so every existing run's prompt is byte-identical.
+    segment_note_en: str = (
+        "Spans in the article are tagged with a predicted stance for that span, "
+        "as 입장=\"지지적\" (supportive), \"중립적\" (neutral) or \"비판적\" "
+        "(oppositional). Treat them as cues, not as the answer: the span stances "
+        "may disagree with each other and with the article's overall stance."
+    )
+    segment_note_ko: str = (
+        "기사 안의 구간에는 그 구간의 예측 입장이 입장=\"지지적|중립적|비판적\" "
+        "형식으로 표시되어 있다. 이는 참고 단서이며 정답이 아니다. 구간별 입장은 "
+        "서로 다를 수 있고, 기사 전체의 입장과도 다를 수 있다."
+    )
 
     def article_block(self, item):
+        note = ""
+        if item.get("segment_labeled"):
+            note = "\n\n" + (
+                self.segment_note_ko if self.language == "ko" else self.segment_note_en
+            )
         if self.language == "ko":
             return (
                 f"이슈: {item['issue']}\n"
                 f"제목: {item['headline']}\n"
-                f"기사:\n{item['article']}"
+                f"기사:\n{item['article']}{note}"
             )
         return (
             f"Issue: {item['issue']}\n"
             f"Headline: {item['headline']}\n"
-            f"{self.article_heading_en}:\n{item['article']}"
+            f"{self.article_heading_en}:\n{item['article']}{note}"
         )
 
     def question(self, item, style="cot"):
