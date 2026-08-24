@@ -23,6 +23,31 @@ class FakeTokenizer:
 
 
 class SharedRoundZeroTest(unittest.TestCase):
+    def test_each_agent_can_receive_a_distinct_initial_question(self):
+        seen = []
+
+        def fake_chat(model, tokenizer, messages, max_new_tokens, temperature,
+                      enable_thinking):
+            seen.append(messages[-1]["content"])
+            return "Final stance: neutral"
+
+        with patch.object(debate, "chat", side_effect=fake_chat):
+            trace = debate.run_debate(
+                object(), FakeTokenizer(), "shared trace label",
+                n_agents=3, n_rounds=1,
+                agent_questions=["headline input", "lead input", "quote input"],
+            )
+
+        self.assertEqual(seen, ["headline input", "lead input", "quote input"])
+        self.assertEqual(trace["agent_questions"], seen)
+
+    def test_agent_question_count_must_match_agents(self):
+        with self.assertRaisesRegex(ValueError, "agent_questions"):
+            debate.run_debate(
+                object(), FakeTokenizer(), "question",
+                n_agents=3, n_rounds=1, agent_questions=["only one"],
+            )
+
     def test_reuse_and_article_grounded_memory(self):
         calls = []
 

@@ -129,6 +129,7 @@ def run_debate(
     debate_protocol="baseline",
     peer_think="strip",
     peer_content="full",
+    agent_questions=None,
 ):
     if n_agents < 1:
         raise ValueError("n_agents must be at least 1")
@@ -165,6 +166,8 @@ def run_debate(
         )
     if initial_answers is not None and len(initial_answers) != n_agents:
         raise ValueError("initial_answers must contain exactly n_agents responses")
+    if agent_questions is not None and len(agent_questions) != n_agents:
+        raise ValueError("agent_questions must contain exactly n_agents prompts")
     if other_answers_formatter is None:
         other_answers_formatter = format_others
 
@@ -177,8 +180,12 @@ def run_debate(
     )
     if len(agent_prompts) != n_agents:
         raise ValueError(f"got {len(agent_prompts)} system prompts for {n_agents} agents")
+    initial_questions = (
+        list(agent_questions) if agent_questions is not None else [question] * n_agents
+    )
     agent_contexts = [
-        build_messages(question, system_prompt=prompt) for prompt in agent_prompts
+        build_messages(initial_questions[index], system_prompt=prompt)
+        for index, prompt in enumerate(agent_prompts)
     ]
     answers_by_round = []
     # what the peers are handed, which is the stored answer unless the thinking
@@ -336,6 +343,9 @@ def run_debate(
     memory_generation_calls = (n_rounds - 1) if use_memory else 0
     return {
         "question": question,
+        "agent_questions": (
+            initial_questions if agent_questions is not None else None
+        ),
         "debate_template": debate_template,
         "system_prompt": system_prompt,
         "n_agents": n_agents,
