@@ -48,6 +48,32 @@ class RolePlannerTest(unittest.TestCase):
         self.assertTrue(plan["fallback"])
         self.assertEqual(plan["selected_roles"], list(role_planner.FALLBACK_ROLES))
 
+    def test_sw_plus_one_keeps_sourcing_and_wording(self):
+        raw = (
+            '{"selected_roles":["causal_consequence"],'
+            '"observed_features":["the article emphasizes consequences"]}'
+        )
+        with patch.object(role_planner, "chat", return_value=raw):
+            plan = role_planner.select_roles(
+                object(), object(), self.item, planner_mode="sw_plus_one"
+            )
+        self.assertFalse(plan["fallback"])
+        self.assertEqual(plan["planner_selected_roles"], ["causal_consequence"])
+        self.assertEqual(plan["fixed_roles"], ["sourcing", "wording"])
+        self.assertEqual(
+            plan["selected_roles"],
+            ["causal_consequence", "sourcing", "wording"],
+        )
+
+    def test_sw_plus_one_fallback_is_exactly_fsw(self):
+        with patch.object(role_planner, "chat", return_value="not json"):
+            plan = role_planner.select_roles(
+                object(), object(), self.item, planner_mode="sw_plus_one"
+            )
+        self.assertEqual(
+            plan["selected_roles"], ["foregrounding", "sourcing", "wording"]
+        )
+
     def test_four_round_debate_uses_one_planner_plus_twelve_agent_calls(self):
         plan = {
             "selected_roles": ["issue_alignment", "sourcing", "wording"],

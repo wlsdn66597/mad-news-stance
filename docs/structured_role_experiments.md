@@ -52,6 +52,18 @@ python scripts/run_planner_debate.py \
 For an ablation using only the roles already present in the repository, replace
 `--role-pool journalism` with `--role-pool legacy`.
 
+To preserve the two evidence channels that the free planner rarely selected,
+fix Sourcing and Wording and let the planner choose only the third role:
+
+```bash
+python scripts/run_planner_debate.py \
+  --config config/phase2_exaone_stance_minimal_en.yaml \
+  --model exaone --split test --n 1001 \
+  --data-seed 0 --run-seed 6000 --n-rounds 4 \
+  --role-pool journalism --planner-mode sw_plus_one \
+  --debate-protocol reasoned_exchange_full
+```
+
 ## Comparison fields
 
 Every output contains the full configuration in `_meta`, per-item gold and

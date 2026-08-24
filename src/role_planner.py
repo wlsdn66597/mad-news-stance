@@ -78,6 +78,8 @@ ROLE_LIBRARIES = {
     "legacy": LEGACY_ROLE_LIBRARY,
 }
 FALLBACK_ROLES = ("foregrounding", "sourcing", "wording")
+PLANNER_MODES = ("free3", "sw_plus_one")
+SW_FIXED_ROLES = ("sourcing", "wording")
 
 PLANNER_SYSTEM_PROMPT = (
     "You select complementary analytical roles for news analysis. You do not "
@@ -85,13 +87,15 @@ PLANNER_SYSTEM_PROMPT = (
 )
 
 
-def build_planner_prompt(item, role_library):
+def build_planner_prompt(item, role_library, selection_count=3):
     cards = "\n".join(
         f"- {name}: {card['use_when']}"
         for name, card in role_library.items()
     )
+    count_text = "one role" if selection_count == 1 else "three distinct and complementary roles"
+    output_roles = '["role_1"]' if selection_count == 1 else '["role_1", "role_2", "role_3"]'
     return (
-        "Select exactly three distinct and complementary roles from the closed list "
+        f"Select exactly {count_text} from the closed list "
         "below. Choose roles based on observable article structure, not on a predicted "
         "answer. Do not create new roles and do not state whether the article supports "
         "or opposes the issue. Return JSON only.\n\n"
@@ -99,7 +103,7 @@ def build_planner_prompt(item, role_library):
         f"Issue: {item['issue']}\n"
         f"Headline: {item.get('headline', '')}\n"
         f"Article (Korean):\n{item.get('article', '')}\n\n"
-        'Output: {"selected_roles": ["role_1", "role_2", "role_3"], '
+        f'Output: {{"selected_roles": {output_roles}, '
         '"observed_features": ["feature 1", "feature 2"]}'
     )
 
@@ -113,13 +117,15 @@ def _json_object(text):
     return json.loads(cleaned[start:end + 1])
 
 
-def parse_planner_output(text, role_library):
+def parse_planner_output(text, role_library, expected_count=3):
     payload = _json_object(text)
     roles = payload.get("selected_roles")
-    if not isinstance(roles, list) or len(roles) != 3:
-        raise ValueError("selected_roles must contain exactly three role ids")
+    if not isinstance(roles, list) or len(roles) != expected_count:
+        raise ValueError(
+            f"selected_roles must contain exactly {expected_count} role ids"
+        )
     roles = [str(role).strip() for role in roles]
-    if len(set(roles)) != 3:
+    if len(set(roles)) != expected_count:
         raise ValueError("selected_roles must be distinct")
     unknown = [role for role in roles if role not in role_library]
     if unknown:
@@ -137,12 +143,32 @@ def select_roles(
     tokenizer,
     item,
     role_pool="journalism",
+    planner_mode="free3",
     max_new_tokens=128,
     temperature=0.0,
     enable_thinking=None,
 ):
     role_library = ROLE_LIBRARIES[role_pool]
-    prompt = build_planner_prompt(item, role_library)
+    if planner_mode not in PLANNER_MODES:
+        raise ValueError(
+            f"unknown planner mode {planner_mode!r}; choose one of {', '.join(PLANNER_MODES)}"
+        )
+    if planner_mode == "sw_plus_one":
+        fixed_roles = list(SW_FIXED_ROLES)
+        candidate_library = {
+            name: card for name, card in role_library.items()
+            if name not in SW_FIXED_ROLES
+        }
+        selection_count = 1
+        fallback_planner_roles = ["foregrounding"]
+    else:
+        fixed_roles = []
+        candidate_library = role_library
+        selection_count = 3
+        fallback_planner_roles = list(FALLBACK_ROLES)
+    prompt = build_planner_prompt(
+        item, candidate_library, selection_count=selection_count
+    )
     messages = build_messages(prompt, system_prompt=PLANNER_SYSTEM_PROMPT)
     raw = strip_think(
         chat(
@@ -156,15 +182,20 @@ def select_roles(
     )
     error = None
     try:
-        roles, features = parse_planner_output(raw, role_library)
+        planner_roles, features = parse_planner_output(
+            raw, candidate_library, expected_count=selection_count
+        )
         fallback = False
     except (ValueError, json.JSONDecodeError) as exc:
-        roles, features = list(FALLBACK_ROLES), []
+        planner_roles, features = fallback_planner_roles, []
         fallback = True
         error = str(exc)
+    roles = planner_roles + fixed_roles
     leakage = bool(re.search(r"\b(supportive|oppositional|neutral)\b", raw, re.I))
     return {
         "selected_roles": roles,
+        "planner_selected_roles": planner_roles,
+        "fixed_roles": fixed_roles,
         "observed_features": features,
         "raw": raw,
         "prompt": prompt,
@@ -173,6 +204,7 @@ def select_roles(
         "parse_error": error,
         "stance_label_leakage": leakage,
         "role_pool": role_pool,
+        "planner_mode": planner_mode,
     }
 
 
@@ -187,6 +219,7 @@ def run_planner_debate(
     planner_temperature=0.0,
     planner_max_new_tokens=128,
     role_pool="journalism",
+    planner_mode="free3",
     debate_protocol="reasoned_exchange_full",
     enable_thinking=None,
 ):
@@ -196,6 +229,7 @@ def run_planner_debate(
         tokenizer,
         item,
         role_pool=role_pool,
+        planner_mode=planner_mode,
         max_new_tokens=planner_max_new_tokens,
         temperature=planner_temperature,
         enable_thinking=enable_thinking,

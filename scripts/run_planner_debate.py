@@ -13,7 +13,7 @@ from transformers import set_seed
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.llm import load_model, model_context_window  # noqa: E402
 from src.metrics import LABELS_DEFAULT, format_report  # noqa: E402
-from src.role_planner import ROLE_LIBRARIES, run_planner_debate  # noqa: E402
+from src.role_planner import PLANNER_MODES, ROLE_LIBRARIES, run_planner_debate  # noqa: E402
 from src.tasks.stance import Stance  # noqa: E402
 
 
@@ -29,6 +29,7 @@ def parse_args():
     parser.add_argument("--max-new-tokens", type=int, default=None)
     parser.add_argument("--n-rounds", type=int, default=4)
     parser.add_argument("--role-pool", choices=sorted(ROLE_LIBRARIES), default="journalism")
+    parser.add_argument("--planner-mode", choices=PLANNER_MODES, default="free3")
     parser.add_argument("--planner-temperature", type=float, default=0.0)
     parser.add_argument("--planner-max-new-tokens", type=int, default=128)
     parser.add_argument("--debate-protocol", default="reasoned_exchange_full")
@@ -75,9 +76,11 @@ def main():
             f"{args.n_rounds} rounds need one or {args.n_rounds - 1}"
         )
     items = task.load(split=split, n=n, seed=data_seed)
+    planner_mode_tag = "" if args.planner_mode == "free3" else f"-{args.planner_mode}"
     output = Path(args.output) if args.output else Path(
         f"results/phase2/stance_{args.model}_{split}_n{n}_{profile}_"
-        f"d{data_seed}_s{run_seed}_planner-{args.role_pool}_a3_r{args.n_rounds}_"
+        f"d{data_seed}_s{run_seed}_planner-{args.role_pool}{planner_mode_tag}_"
+        f"a3_r{args.n_rounds}_"
         f"{args.debate_protocol}{f'_{args.tag}' if args.tag else ''}.json"
     )
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -102,6 +105,7 @@ def main():
         "n_agents": 3,
         "n_rounds": args.n_rounds,
         "role_pool": args.role_pool,
+        "planner_mode": args.planner_mode,
         "available_roles": list(ROLE_LIBRARIES[args.role_pool]),
         "planner_temperature": args.planner_temperature,
         "planner_max_new_tokens": args.planner_max_new_tokens,
@@ -111,7 +115,8 @@ def main():
     }
 
     print(
-        f"[data] split={split} n={len(items)} [method] planner={args.role_pool} "
+        f"[data] split={split} n={len(items)} [method] planner={args.role_pool}/"
+        f"{args.planner_mode} "
         f"a=3 r={args.n_rounds} calls/item={1 + 3 * args.n_rounds}", flush=True
     )
     set_seed(run_seed)
@@ -128,7 +133,9 @@ def main():
         key = str(item["id"])
         if key in done:
             continue
-        item_seed = generation_seed(run_seed, f"planner_{args.role_pool}", key)
+        item_seed = generation_seed(
+            run_seed, f"planner_{args.role_pool}_{args.planner_mode}", key
+        )
         set_seed(item_seed)
         result = run_planner_debate(
             model,
@@ -141,6 +148,7 @@ def main():
             planner_temperature=args.planner_temperature,
             planner_max_new_tokens=args.planner_max_new_tokens,
             role_pool=args.role_pool,
+            planner_mode=args.planner_mode,
             debate_protocol=args.debate_protocol,
             enable_thinking=enable_thinking,
         )
