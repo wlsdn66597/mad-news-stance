@@ -1,13 +1,14 @@
-"""Journalism-segment agents followed by an article-level aggregator.
+"""Journalism-segment agents followed by majority vote or an aggregator.
 
 Four agents independently read the headline, lead, conclusion, or quotations.
 They keep that information boundary throughout debate: later rounds exchange
-analyses, not the raw segments.  A final article-level aggregator combines the
-four final analyses with the complete article.  With four debate rounds this
-uses 4 * 4 + 1 = 17 model generations per item.
+analyses, not the raw segments. By default, the final agent labels are combined
+with the repository's existing majority rule. The earlier article-level
+aggregator remains available as an explicit reproduction option.
 """
 import re
 
+from .consensus import current_final_majority, unique_majority
 from .debate import run_debate as run_debate_engine
 from .llm import build_messages, chat, strip_think
 
@@ -178,8 +179,19 @@ def run_segment_debate(
     aggregator_temperature=None,
     aggregator_max_new_tokens=512,
     enable_thinking=None,
+    decision_rule="majority",
+    tie_seed=0,
 ):
-    """Run four segment agents for ``n_rounds`` and aggregate their outputs."""
+    """Run segment agents and combine their final labels.
+
+    ``majority`` matches the repository's existing final-round vote, including
+    its legacy first-valid-label handling for a tie. ``aggregator`` reproduces
+    the original segment experiment in which another model call reads the full
+    article and the four final analyses.
+    """
+    if decision_rule not in {"majority", "aggregator"}:
+        raise ValueError(f"unknown segment decision rule: {decision_rule}")
+
     segments = split_journalism_segments(item)
     agent_questions = build_segment_questions(item, segments)
     trace = run_debate_engine(
@@ -197,42 +209,63 @@ def run_segment_debate(
         debate_protocol="segment_reasoned_exchange",
     )
     final_analyses = trace["answers_by_round"][-1]
-    aggregator_prompt = build_aggregator_prompt(item, final_analyses)
-    aggregator_messages = build_messages(
-        aggregator_prompt, system_prompt=AGGREGATOR_SYSTEM_PROMPT
-    )
-    effective_aggregator_temperature = (
-        temperature if aggregator_temperature is None else aggregator_temperature
-    )
-    aggregator_raw = strip_think(
-        chat(
-            model,
-            tokenizer,
-            aggregator_messages,
-            max_new_tokens=aggregator_max_new_tokens,
-            temperature=effective_aggregator_temperature,
-            enable_thinking=enable_thinking,
+    agent_preds = [task.parse(answer) for answer in final_analyses]
+    vote = unique_majority(agent_preds)
+
+    aggregator = None
+    raw = None
+    if decision_rule == "majority":
+        pred, decision_reason = current_final_majority(
+            [agent_preds], item["id"], fallback_seed=tie_seed
         )
-    )
-    pred = task.parse(aggregator_raw)
-    return {
-        "pred": pred,
-        "raw": aggregator_raw,
-        "preds": [task.parse(answer) for answer in final_analyses],
-        "segments": segments,
-        "segment_order": list(SEGMENT_ORDER),
-        "debate_trace": trace,
-        "aggregator": {
+    else:
+        aggregator_prompt = build_aggregator_prompt(item, final_analyses)
+        aggregator_messages = build_messages(
+            aggregator_prompt, system_prompt=AGGREGATOR_SYSTEM_PROMPT
+        )
+        effective_aggregator_temperature = (
+            temperature if aggregator_temperature is None else aggregator_temperature
+        )
+        raw = strip_think(
+            chat(
+                model,
+                tokenizer,
+                aggregator_messages,
+                max_new_tokens=aggregator_max_new_tokens,
+                temperature=effective_aggregator_temperature,
+                enable_thinking=enable_thinking,
+            )
+        )
+        pred = task.parse(raw)
+        decision_reason = "article_level_aggregator"
+        aggregator = {
             "prompt": aggregator_prompt,
             "messages": aggregator_messages,
-            "raw": aggregator_raw,
+            "raw": raw,
             "pred": pred,
             "temperature": effective_aggregator_temperature,
             "max_new_tokens": aggregator_max_new_tokens,
+        }
+
+    aggregator_calls = int(decision_rule == "aggregator")
+    return {
+        "pred": pred,
+        "raw": raw,
+        "preds": agent_preds,
+        "segments": segments,
+        "segment_order": list(SEGMENT_ORDER),
+        "debate_trace": trace,
+        "decision": {
+            "rule": decision_rule,
+            "reason": decision_reason,
+            "final_agent_labels": agent_preds,
+            "label_counts": vote.counts,
+            "tied": vote.tied,
         },
+        "aggregator": aggregator,
         "call_counts": {
             "segment_agent_generation_calls": len(SEGMENT_ORDER) * n_rounds,
-            "aggregator_generation_calls": 1,
-            "total_generation_calls": len(SEGMENT_ORDER) * n_rounds + 1,
+            "aggregator_generation_calls": aggregator_calls,
+            "total_generation_calls": len(SEGMENT_ORDER) * n_rounds + aggregator_calls,
         },
     }

@@ -1,4 +1,4 @@
-"""Run the four journalism-segment agents for four rounds, then aggregate."""
+"""Run four journalism-segment agents and combine their final labels."""
 import argparse
 import hashlib
 import json
@@ -27,6 +27,10 @@ def parse_args():
     parser.add_argument("--temperature", type=float, default=None)
     parser.add_argument("--max-new-tokens", type=int, default=None)
     parser.add_argument("--n-rounds", type=int, default=4)
+    parser.add_argument(
+        "--decision-rule", choices=["majority", "aggregator"], default="majority",
+        help="majority uses no final model call; aggregator reproduces the earlier experiment",
+    )
     parser.add_argument(
         "--aggregator-temperature", type=float, default=None,
         help="defaults to --temperature, keeping the stance-generating call comparable",
@@ -75,7 +79,8 @@ def main():
     items = task.load(split=split, n=n, seed=data_seed)
     output = Path(args.output) if args.output else Path(
         f"results/phase2/stance_{args.model}_{split}_n{n}_{profile}_"
-        f"d{data_seed}_s{run_seed}_segment-agents_a4_r{args.n_rounds}"
+        f"d{data_seed}_s{run_seed}_segment-agents-{args.decision_rule}_"
+        f"a4_r{args.n_rounds}"
         f"{f'_{args.tag}' if args.tag else ''}.json"
     )
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -85,8 +90,10 @@ def main():
     else:
         results = {}
     done = results.setdefault("segment_debate", {})
+    aggregator_calls = int(args.decision_rule == "aggregator")
+    calls_per_item = len(SEGMENT_ORDER) * args.n_rounds + aggregator_calls
     results["_meta"] = {
-        "method": "segment_debate",
+        "method": f"segment_debate_{args.decision_rule}",
         "config": args.config,
         "model_id": model_cfg["id"],
         "load_in_4bit": bool(cfg["load_in_4bit"]),
@@ -100,16 +107,23 @@ def main():
         "n_agents": len(SEGMENT_ORDER),
         "segment_order": list(SEGMENT_ORDER),
         "n_rounds": args.n_rounds,
-        "aggregator_temperature": aggregator_temperature,
-        "aggregator_max_new_tokens": args.aggregator_max_new_tokens,
+        "decision_rule": args.decision_rule,
+        "tie_rule": "legacy_first_valid" if args.decision_rule == "majority" else None,
+        "tie_seed": run_seed if args.decision_rule == "majority" else None,
+        "aggregator_temperature": (
+            aggregator_temperature if args.decision_rule == "aggregator" else None
+        ),
+        "aggregator_max_new_tokens": (
+            args.aggregator_max_new_tokens if args.decision_rule == "aggregator" else None
+        ),
         "enable_thinking": enable_thinking,
-        "calls_per_item": len(SEGMENT_ORDER) * args.n_rounds + 1,
+        "calls_per_item": calls_per_item,
     }
 
     print(
         f"[data] split={split} n={len(items)} [method] segment agents "
-        f"a={len(SEGMENT_ORDER)} r={args.n_rounds} calls/item="
-        f"{len(SEGMENT_ORDER) * args.n_rounds + 1}", flush=True
+        f"a={len(SEGMENT_ORDER)} r={args.n_rounds} decision={args.decision_rule} "
+        f"calls/item={calls_per_item}", flush=True
     )
     set_seed(run_seed)
     model, tokenizer = load_model(
@@ -138,6 +152,8 @@ def main():
             aggregator_temperature=aggregator_temperature,
             aggregator_max_new_tokens=args.aggregator_max_new_tokens,
             enable_thinking=enable_thinking,
+            decision_rule=args.decision_rule,
+            tie_seed=run_seed,
         )
         result.update({
             "gold": item["gold"],

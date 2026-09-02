@@ -10,16 +10,16 @@ debate condition.
 `scripts/run_segment_debate.py` assigns one agent to each of Headline, Lead,
 Conclusion, and Quotations. Each agent sees only its assigned raw segment in
 Round 0. In later rounds it retains the same role and original segment while
-receiving the other agents' analyses. An always-called article-level aggregator
-then verifies their final analyses against the full article and returns the
-label. It does not count agent labels.
+receiving the other agents' analyses. The default final decision is the existing
+repository majority vote over the four agents' final labels. A tied vote uses
+the same legacy first-valid-label rule as the main MAD pipeline.
 
-By default the aggregator uses the same sampling temperature as the debate
-agents, so the final stance-generating call does not introduce a decoding
-change. It can be overridden explicitly with `--aggregator-temperature`.
+The earlier full-article aggregator remains available with
+`--decision-rule aggregator`. In that mode it uses the same sampling temperature
+as the debate agents unless overridden with `--aggregator-temperature`.
 
-With four rounds, the method uses 17 generations per item: 16 segment-agent
-generations and one aggregation.
+With four rounds, majority mode uses 16 generations per item. Aggregator mode
+uses 17: 16 segment-agent generations and one aggregation.
 
 ```bash
 python scripts/run_segment_debate.py \
@@ -27,6 +27,9 @@ python scripts/run_segment_debate.py \
   --model exaone --split test --n 1001 \
   --data-seed 0 --run-seed 6000 --n-rounds 4
 ```
+
+To reproduce the former aggregator experiment, append
+`--decision-rule aggregator`.
 
 ## Planner-selected roles
 
@@ -70,4 +73,5 @@ Every output contains the full configuration in `_meta`, per-item gold and
 prediction fields, the complete debate trace, and generation counts. Planner
 outputs additionally store selected roles, observed features, fallback status,
 and stance-label leakage. Segment outputs store extracted segments, each
-agent's final label, and the aggregator prompt and response.
+agent's final label, vote counts, tie status and decision reason. Aggregator-mode
+outputs additionally store the aggregator prompt and response.

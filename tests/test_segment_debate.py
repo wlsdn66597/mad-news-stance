@@ -53,7 +53,56 @@ class SegmentDebateTest(unittest.TestCase):
         segment = segment_debate.split_journalism_segments(item)["quotations"]
         self.assertIn("No direct quotation", segment)
 
-    def test_four_rounds_plus_aggregator_are_recorded_as_17_calls(self):
+    def test_four_round_majority_uses_16_calls_and_no_aggregator(self):
+        fake_trace = {
+            "answers_by_round": [
+                [
+                    "Final stance: supportive",
+                    "Final stance: supportive",
+                    "Final stance: neutral",
+                    "Final stance: oppositional",
+                ]
+                for _ in range(4)
+            ]
+        }
+        with patch.object(segment_debate, "run_debate_engine", return_value=fake_trace):
+            with patch.object(segment_debate, "chat") as aggregator_chat:
+                result = segment_debate.run_segment_debate(
+                    object(), object(), FakeTask(), self.item, n_rounds=4
+                )
+        self.assertEqual(result["pred"], "supportive")
+        self.assertEqual(result["decision"]["label_counts"]["supportive"], 2)
+        self.assertFalse(result["decision"]["tied"])
+        self.assertIsNone(result["aggregator"])
+        self.assertEqual(result["call_counts"]["total_generation_calls"], 16)
+        aggregator_chat.assert_not_called()
+
+    def test_majority_tie_matches_existing_first_valid_rule(self):
+        fake_trace = {
+            "answers_by_round": [[
+                "Final stance: neutral",
+                "Final stance: supportive",
+                "Final stance: neutral",
+                "Final stance: neutral",
+            ]]
+        }
+        with patch.object(segment_debate, "run_debate_engine", return_value=fake_trace):
+            result = segment_debate.run_segment_debate(
+                object(), object(), FakeTask(), self.item, n_rounds=1
+            )
+        self.assertEqual(result["pred"], "neutral")
+        self.assertFalse(result["decision"]["tied"])
+
+        fake_trace["answers_by_round"][0][-1] = "Final stance: supportive"
+        with patch.object(segment_debate, "run_debate_engine", return_value=fake_trace):
+            result = segment_debate.run_segment_debate(
+                object(), object(), FakeTask(), self.item, n_rounds=1
+            )
+        self.assertEqual(result["pred"], "neutral")
+        self.assertTrue(result["decision"]["tied"])
+        self.assertEqual(result["decision"]["reason"], "final_tie_legacy_first_valid")
+
+    def test_aggregator_mode_reproduces_17_call_pipeline(self):
         fake_trace = {
             "answers_by_round": [
                 ["Final stance: neutral"] * 4 for _ in range(4)
@@ -62,7 +111,8 @@ class SegmentDebateTest(unittest.TestCase):
         with patch.object(segment_debate, "run_debate_engine", return_value=fake_trace) as engine:
             with patch.object(segment_debate, "chat", return_value="Final stance: supportive"):
                 result = segment_debate.run_segment_debate(
-                    object(), object(), FakeTask(), self.item, n_rounds=4
+                    object(), object(), FakeTask(), self.item, n_rounds=4,
+                    decision_rule="aggregator",
                 )
         self.assertEqual(result["pred"], "supportive")
         self.assertEqual(result["call_counts"]["total_generation_calls"], 17)
