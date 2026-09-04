@@ -195,6 +195,24 @@ python scripts/run_phase2.py --split test --n 200
 
 See [docs/selective_judge.md](docs/selective_judge.md) for reproducible offline aggregation and selective-judge experiments.
 
+## Qwen3-1.7B paper comparison
+
+`config/phase2_qwen17_stance_minimal_en.yaml` keeps the Qwen3-4B/8B paper-run
+conditions fixed while changing only the backbone to `Qwen/Qwen3-1.7B`.
+The complete seven-condition suite resumes per item and runs with:
+
+```bash
+mkdir -p logs
+nohup bash scripts/run_qwen17_paper_suite.sh \
+  > logs/qwen17_paper_suite_s6000.log 2>&1 &
+```
+
+It produces same-prompt Single, Majority, Debate 4R and selective-Judge results,
+then the corresponding F/S/W Majority, Debate 4R and selective-Judge results.
+All debate conditions use full exchange, thinking off, three agents and four
+rounds. The judge is called only for non-unanimous final agent labels and reads
+the independent Round 0 analyses, matching the existing Qwen3 comparison.
+
 ## 이어서 작업할 때
 
 현재 상태·측정 결과·다음 실험은 [HANDOFF.md](HANDOFF.md)에 정리돼 있다.

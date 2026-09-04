@@ -1,0 +1,38 @@
+# Qwen3-1.7B paper comparison under the same settings as Qwen3-4B/8B.
+models:
+  qwen:
+    id: Qwen/Qwen3-1.7B
+    system_prompt: null
+    trust_remote_code: false
+
+data_path: data/k-news-stance_nosegment.json
+prompt_profile: stance_minimal_en
+
+# Keep precision identical across model-size comparisons.
+load_in_4bit: false
+mem_fraction: null
+gpu_index: 0
+
+seed: 0
+split: test
+n: 1001
+max_new_tokens: 1024
+
+# This deliberately retains the earlier paper-run decoding settings instead of
+# tuning Qwen3-1.7B separately.
+sampling:
+  temperature: 1.0
+
+majority:
+  k: 3
+
+debate:
+  n_agents: 3
+  n_rounds: 4
+
+memory:
+  max_new_tokens: 256
+  temperature: 0.0
+
+# Single, majority and debate reuse identical Round 0 generations.
+share_round0: true
