@@ -184,6 +184,50 @@ python scripts/run_phase2.py --split test --n 200
 - 결과: `results/phase2/stance_{model}_{split}_n{n}.json` + 이어하기.
 - 파라미터: `config/phase2.yaml`.
 
+### Zero-shot JoA-style segment → article baseline
+
+This condition replaces the supplied RoBERTa segment predictions with EXAONE
+zero-shot predictions. The RoBERTa-labelled file is used only to recover the
+marked headline, lead, direct-quotation and conclusion boundaries. Its
+`입장="..."` attributes are removed before any model call. Each marked span is
+classified once, the EXAONE predictions are inserted back into the XML-like
+article, and the same EXAONE model classifies that article once. There is no
+debate, voting, training or test-label input.
+
+Dataset files are not pushed with this code. Place the supplied RoBERTa
+prediction file at
+`data/k-news-stance-for-prediction-test1001-joa-icl.json`; the one-command
+runner below automatically creates the ignored label-free boundary file
+`data/k-news-stance_test1001_joa_segments_unlabeled.json`. To prepare it
+manually:
+
+```bash
+python scripts/prepare_joa_zero_shot.py \
+  --input data/k-news-stance-for-prediction-test1001-joa-icl.json \
+  --output data/k-news-stance_test1001_joa_segments_unlabeled.json
+```
+
+Run all 1,001 test articles with one command (safe to resume):
+
+```bash
+mkdir -p logs
+nohup bash scripts/run_joa_zero_shot_exaone.sh \
+  > logs/joa_zero_shot_exaone_s6000.log 2>&1 &
+```
+
+For a smoke test, override the number of articles:
+
+```bash
+N=3 RUN_SEED=6000 bash scripts/run_joa_zero_shot_exaone.sh --tag smoke
+```
+
+The resumable trace and final metrics are written under
+`results/joa_zero_shot/`. A second `*_segment_labels.json` file contains only
+the EXAONE-labelled articles and can be reused with the existing
+`scripts/run_phase2.py --segment-labels ...` interface. Malformed segment
+outputs receive the documented neutral parsing fallback without an additional
+model call, and the fallback count is reported.
+
 ## 로드맵
 
 - **Phase 0 (현재):** 스모크 테스트 — 파이프라인 점검.
