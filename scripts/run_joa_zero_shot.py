@@ -101,7 +101,7 @@ def main():
     tag = f"_{args.tag}" if args.tag else ""
     output = Path(
         f"results/joa_zero_shot/{args.model}_{split}_n{len(items)}_"
-        f"d{data_seed}_s{args.run_seed}{tag}.json"
+        f"d{data_seed}_s{args.run_seed}_article-prompt-original{tag}.json"
     )
     overlay = output.with_name(output.stem + "_segment_labels.json")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -139,6 +139,8 @@ def main():
         "debate": False,
         "segment_calls_per_span": 1,
         "article_calls_per_item": 1,
+        "article_prompt_style": "vanilla",
+        "segment_label_explanation_added": False,
     }
     save(output, results)
 
@@ -193,8 +195,10 @@ def main():
             **item,
             "headline": annotated_title,
             "article": annotated_body,
-            "segment_labeled": True,
         }
+        # Keep the article-agent instruction byte-for-byte aligned with the
+        # existing stance experiment. The predicted attributes remain in the
+        # article, but no extra explanation of those attributes is appended.
         article_prompt = task.question(article_item, style="vanilla")
         article_seed = generation_seed(args.run_seed, key, "article")
         set_seed(article_seed)
