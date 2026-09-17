@@ -69,8 +69,10 @@ LEGACY_USE_WHEN = {
 }
 
 LEGACY_ROLE_LIBRARY = {
-    name: {"use_when": LEGACY_USE_WHEN[name], "prompt": prompt}
-    for name, prompt in STANCE_PERSONA_ROLES.items()
+    # Experimental fixed-mix controls (for example, ``generic`` and
+    # ``grounded_framing``) should not silently become planner candidates.
+    name: {"use_when": use_when, "prompt": STANCE_PERSONA_ROLES[name]}
+    for name, use_when in LEGACY_USE_WHEN.items()
 }
 
 ROLE_LIBRARIES = {

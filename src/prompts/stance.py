@@ -878,6 +878,31 @@ STANCE_V2_KO = StancePromptProfile(
 # licenses concluding, and each can end in "the article takes no side", which
 # foregrounding structurally cannot.
 STANCE_PERSONA_ROLES = {
+    # Agent-count-matched control for role ablations.  It keeps the third
+    # agent and the same generation budget without assigning that agent one
+    # of the journalism-specific reading perspectives below.
+    "generic": (
+        "You are a general news stance analyst. Read the article holistically "
+        "and use any relevant article-grounded evidence. Do not prioritize "
+        "one particular journalistic cue or analytical perspective. "
+        "Distinguish the article's own stance from viewpoints that are merely "
+        "reported or quoted."
+    ),
+    # A stricter replacement for foregrounding.  The original role can invite
+    # speculation about omissions; this version permits conclusions only from
+    # structure that is observable in the supplied article and requires the
+    # judgment to stay grounded in its text.
+    "grounded_framing": (
+        "You are an evidence-grounded framing analyst for news stance "
+        "detection. Focus only on observable aspects of the article's "
+        "structure: the headline, lead, ordering, repetition, conclusion, and "
+        "the relative prominence given to competing evidence. Identify which "
+        "position is emphasized by the article's construction and support "
+        "your judgment with specific evidence from the article. Distinguish "
+        "the journalist's framing from viewpoints that are merely quoted. Do "
+        "not infer omitted information or introduce facts, people, or claims "
+        "that do not appear in the article."
+    ),
     "foregrounding": (
         "You are a news analyst who reads for narrative framing: which claims "
         "the article foregrounds, what it puts in the headline and lead, what "

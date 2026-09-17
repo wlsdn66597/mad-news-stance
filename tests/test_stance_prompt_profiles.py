@@ -144,6 +144,21 @@ class AgentPersonaTest(unittest.TestCase):
             self.assertNotIn("supportive", lowered)
             self.assertNotIn("oppositional", lowered)
 
+    def test_generic_and_grounded_framing_controls_keep_three_agents(self):
+        generic = stance_personas(
+            3, mix="generic,sourcing,wording"
+        )
+        grounded = stance_personas(
+            3, mix="grounded_framing,sourcing,wording"
+        )
+
+        self.assertEqual(len(generic), 3)
+        self.assertEqual(len(grounded), 3)
+        self.assertIn("holistically", generic[0].lower())
+        self.assertIn("observable", grounded[0].lower())
+        self.assertIn("do not infer omitted", grounded[0].lower())
+        self.assertEqual(generic[1:], grounded[1:])
+
 
 class MinimalEnBaselineTemplatesTest(unittest.TestCase):
     """The rows the plan's baseline column needs, and a fair memory test."""
