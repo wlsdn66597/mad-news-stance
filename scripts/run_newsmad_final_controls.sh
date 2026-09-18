@@ -1,27 +1,22 @@
 #!/usr/bin/env bash
-# Evaluate the three ablations below an already-completed Sourcing/Wording
-# NewsMAD run.  This script never regenerates the full S/W model.
+# One-run component ablations for the final two-agent Sourcing/Wording NewsMAD.
+# The completed full S/W + Judge condition is never regenerated here.
 #
-#   1) w/o Sourcing: one Wording agent, four self-refinement rounds
-#   2) w/o Wording: one Sourcing agent, four self-refinement rounds
-#   3) w/o Judge: reuse the saved S/W four-round prediction before Judge
+#   1) w/o Sourcing: Wording / Wording, peer debate 4R, selective Judge
+#   2) w/o Wording:  Sourcing / Sourcing, peer debate 4R, selective Judge
+#   3) w/o Judge:    reuse the saved Sourcing / Wording 4R prediction
 #
-# The role-removal runs retain the paper's four-round setting.  With one role
-# remaining there is no peer, so rounds 2--4 use the framework's full
-# self-refine prompt: the agent receives its own preceding response and writes
-# a complete revised rationale and stance.  The selective Judge has no
-# disagreement to resolve in a one-agent condition and therefore makes no
-# additional call.  All model/data/generation settings otherwise stay fixed.
-#
-# Defaults: seeds 6000, 6001, and 6002 for mean/std reporting.
-# Re-running resumes per-item output rather than regenerating completed items.
+# Thus the role-removal conditions keep the agent count (2), round count (4),
+# debate protocol, Judge policy, prompt profile, data, model, and generation
+# settings fixed.  Only the removed role is replaced by a second copy of the
+# remaining role.  The default single run uses seed 6000.
 #
 # Usage:
 #   nohup bash scripts/run_newsmad_final_controls.sh \
-#     > logs/newsmad_role_ablation_selfrefine.log 2>&1 &
+#     > logs/newsmad_component_ablation_s6000.log 2>&1 &
 #
 # Optional smoke/inspection runs:
-#   N=10 ABLATION_SEEDS="6000" bash scripts/run_newsmad_final_controls.sh
+#   N=10 bash scripts/run_newsmad_final_controls.sh
 #   DRY_RUN=1 bash scripts/run_newsmad_final_controls.sh
 set -euo pipefail
 
@@ -33,31 +28,25 @@ SPLIT="${SPLIT:-test}"
 N="${N:-1001}"
 PROFILE="${PROFILE:-stance_minimal_en}"
 DATA_SEED="${DATA_SEED:-0}"
-ABLATION_SEEDS="${ABLATION_SEEDS:-6000 6001 6002}"
+RUN_SEED="${RUN_SEED:-6000}"
+ORDER_SEED="${ORDER_SEED:-8001}"
 TEMPERATURE="${TEMPERATURE:-1.0}"
+DATA="${DATA:-data/k-news-stance_nosegment.json}"
+JUDGE_MODEL="${JUDGE_MODEL:-LGAI-EXAONE/EXAONE-4.0-1.2B}"
 DRY_RUN="${DRY_RUN:-0}"
 
+BASE="results/phase2/stance_${MODEL}_${SPLIT}_n${N}_${PROFILE}_d${DATA_SEED}_s${RUN_SEED}_a2_r4"
+FULL_SW_RESULT="${BASE}_personas_mix-sourcing-wording_reasoned_exchange_full.json"
+NO_SOURCING_RESULT="${BASE}_personas_mix-wording-wording_reasoned_exchange_full.json"
+NO_WORDING_RESULT="${BASE}_personas_mix-sourcing-sourcing_reasoned_exchange_full.json"
+
+NO_SOURCING_JUDGE_DIR="results/judge_no_sourcing_ww_a2_4r_full_s${RUN_SEED}"
+NO_WORDING_JUDGE_DIR="results/judge_no_wording_ss_a2_4r_full_s${RUN_SEED}"
+
 [ -f "$CONFIG" ] || { echo "missing config: $CONFIG" >&2; exit 2; }
-mkdir -p logs results/phase2
-
-base_path () {
-  local seed="$1"
-  printf 'results/phase2/stance_%s_%s_n%s_%s_d%s_s%s' \
-    "$MODEL" "$SPLIT" "$N" "$PROFILE" "$DATA_SEED" "$seed"
-}
-
-full_sw_result () {
-  local seed="$1"
-  printf '%s_a2_r4_personas_mix-sourcing-wording_reasoned_exchange_full.json' \
-    "$(base_path "$seed")"
-}
-
-role_result () {
-  local seed="$1"
-  local role="$2"
-  printf '%s_a1_r4_personas_selfrefine-full_only-%s.json' \
-    "$(base_path "$seed")" "$role"
-}
+[ -f "$DATA" ] || { echo "missing dataset: $DATA" >&2; exit 2; }
+mkdir -p logs results/phase2 \
+  "$NO_SOURCING_JUDGE_DIR" "$NO_WORDING_JUDGE_DIR"
 
 run_step () {
   local title="$1"
@@ -75,86 +64,122 @@ run_step () {
   echo "===== $title COMPLETE $(( $(date +%s) - started )) sec ====="
 }
 
-run_role_self_refine () {
-  local seed="$1"
-  local role="$2"
-  local label="$3"
-  run_step "${label} S${seed}: ${role^^} SELF-REFINE 4R" \
+run_debate () {
+  local title="$1"
+  local mix="$2"
+  run_step "$title" \
     python scripts/run_phase2.py \
       --config "$CONFIG" --model "$MODEL" \
-      --methods debate --personas --persona-mix "$role" \
-      --peer-mode self --self-refine-format full \
+      --methods debate --personas --persona-mix "$mix" \
       --split "$SPLIT" --n "$N" \
       --prompt-profile "$PROFILE" \
-      --data-seed "$DATA_SEED" --run-seed "$seed" \
+      --data-seed "$DATA_SEED" --run-seed "$RUN_SEED" \
       --temperature "$TEMPERATURE" \
-      --n-agents 1 --n-rounds 4
+      --n-agents 2 --n-rounds 4 \
+      --debate-protocol reasoned_exchange_full
 }
 
-print_metrics () {
+run_judge () {
+  local title="$1"
+  local input_result="$2"
+  local output_dir="$3"
+  [ "$DRY_RUN" = "1" ] || [ -f "$input_result" ] || {
+    echo "missing debate result: $input_result" >&2
+    exit 2
+  }
+  run_step "$title" \
+    python scripts/run_selective_judge.py \
+      --input-result "$input_result" --data-path "$DATA" \
+      --judge-model "$JUDGE_MODEL" \
+      --judge-trigger non_unanimous \
+      --judge-input-mode debate_trace --judge-rounds first \
+      --judge-order-seed "$ORDER_SEED" --judge-temperature 0 \
+      --judge-max-new-tokens 384 --judge-max-retries 1 \
+      --output-dir "$output_dir"
+}
+
+print_judge_summary () {
   local label="$1"
-  local seed="$2"
-  local result="$3"
-  local include_round1="$4"
-  if [ ! -f "$result" ]; then
-    echo "[summary] ${label} S${seed}: missing result $result"
+  local output_dir="$2"
+  local summary
+  summary=$(find "$output_dir" -maxdepth 1 -type f -name '*.summary.json' -print -quit)
+  if [ -z "$summary" ]; then
+    echo "[summary] $label: no summary file in $output_dir"
     return 0
   fi
-  python - "$label" "$seed" "$result" "$include_round1" <<'PY'
+  python - "$label" "$summary" <<'PY'
 import json
 import sys
 
-from src.consensus import classification_metrics, parse_stance
-
-label, seed, path, include_round1 = sys.argv[1:]
+label, path = sys.argv[1:]
 with open(path, encoding="utf-8") as handle:
-    result = json.load(handle)
-rows = list(result["debate"].values())
-gold = [row["gold"] for row in rows]
-final = classification_metrics([row["pred"] for row in rows], gold)
-
-prefix = ""
-if include_round1 == "1":
-    round1 = []
-    for row in rows:
-        first_response = row["debate_trace"]["answers_by_round"][0][0]
-        round1.append(parse_stance(first_response) or "none")
-    first = classification_metrics(round1, gold)
-    prefix = f"R1 ACC={first['accuracy']:.4f} F1={first['macro_f1']:.4f} | "
-
+    report = json.load(handle)
+before = report["baseline_metrics"]
+after = report["judge_metrics"]
+trigger = report["trigger_subset"]
 print(
-    f"[summary] {label} S{seed}: {prefix}"
-    f"R4 ACC={final['accuracy']:.4f} F1={final['macro_f1']:.4f} | "
-    f"items={len(rows)}"
+    f"[summary] {label}: "
+    f"debate ACC={before['accuracy']:.4f} F1={before['macro_f1']:.4f} | "
+    f"+Judge ACC={after['accuracy']:.4f} F1={after['macro_f1']:.4f} | "
+    f"judge={trigger['triggered_total']}/{report['items']} "
+    f"({trigger['trigger_ratio']:.2%})"
 )
 PY
 }
 
-echo "===== NEWSMAD ROLE ABLATIONS START $(date '+%F %T') ====="
-echo "split=$SPLIT n=$N data_seed=$DATA_SEED temperature=$TEMPERATURE"
-echo "seeds=$ABLATION_SEEDS"
+print_no_judge_summary () {
+  local result="$1"
+  if [ ! -f "$result" ]; then
+    echo "[summary] w/o Judge: missing existing S/W result $result"
+    return 0
+  fi
+  python - "$result" <<'PY'
+import json
+import sys
+
+from src.consensus import classification_metrics
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    result = json.load(handle)
+rows = list(result["debate"].values())
+metrics = classification_metrics(
+    [row["pred"] for row in rows],
+    [row["gold"] for row in rows],
+)
+print(
+    f"[summary] w/o Judge: ACC={metrics['accuracy']:.4f} "
+    f"F1={metrics['macro_f1']:.4f} items={len(rows)}"
+)
+PY
+}
+
+echo "===== NEWSMAD COMPONENT ABLATIONS START $(date '+%F %T') ====="
+echo "split=$SPLIT n=$N data_seed=$DATA_SEED run_seed=$RUN_SEED"
 echo "Full S/W + Judge is NOT regenerated."
-echo "w/o Sourcing: one Wording agent, self-refine 4R"
-echo "w/o Wording: one Sourcing agent, self-refine 4R"
+echo "w/o Sourcing: Wording/Wording, 2 agents, peer debate 4R, selective Judge"
+echo "w/o Wording: Sourcing/Sourcing, 2 agents, peer debate 4R, selective Judge"
 echo "w/o Judge: metrics read from the existing S/W 4R result"
 
-for seed in $ABLATION_SEEDS; do
-  run_role_self_refine "$seed" wording "W/O SOURCING"
-  run_role_self_refine "$seed" sourcing "W/O WORDING"
-done
+run_debate "1. W/O SOURCING (WORDING / WORDING): DEBATE 4R" \
+  "wording,wording"
+run_judge "2. W/O SOURCING (WORDING / WORDING): SELECTIVE JUDGE" \
+  "$NO_SOURCING_RESULT" "$NO_SOURCING_JUDGE_DIR"
+
+run_debate "3. W/O WORDING (SOURCING / SOURCING): DEBATE 4R" \
+  "sourcing,sourcing"
+run_judge "4. W/O WORDING (SOURCING / SOURCING): SELECTIVE JUDGE" \
+  "$NO_WORDING_RESULT" "$NO_WORDING_JUDGE_DIR"
 
 if [ "$DRY_RUN" != "1" ]; then
   echo "===== FINAL METRICS ====="
-  for seed in $ABLATION_SEEDS; do
-    print_metrics "w/o Sourcing" "$seed" "$(role_result "$seed" wording)" 1
-    print_metrics "w/o Wording" "$seed" "$(role_result "$seed" sourcing)" 1
-    print_metrics "w/o Judge" "$seed" "$(full_sw_result "$seed")" 0
-  done
+  print_judge_summary "w/o Sourcing (W/W)" "$NO_SOURCING_JUDGE_DIR"
+  print_judge_summary "w/o Wording (S/S)" "$NO_WORDING_JUDGE_DIR"
+  print_no_judge_summary "$FULL_SW_RESULT"
 fi
 
-echo "===== NEWSMAD ROLE ABLATIONS COMPLETE $(date '+%F %T') ====="
-for seed in $ABLATION_SEEDS; do
-  echo "w/o Sourcing S${seed}: $(role_result "$seed" wording)"
-  echo "w/o Wording S${seed}: $(role_result "$seed" sourcing)"
-  echo "w/o Judge S${seed} (existing): $(full_sw_result "$seed")"
-done
+echo "===== NEWSMAD COMPONENT ABLATIONS COMPLETE $(date '+%F %T') ====="
+echo "w/o Sourcing result: $NO_SOURCING_RESULT"
+echo "w/o Sourcing Judge: $NO_SOURCING_JUDGE_DIR"
+echo "w/o Wording result: $NO_WORDING_RESULT"
+echo "w/o Wording Judge: $NO_WORDING_JUDGE_DIR"
+echo "w/o Judge source (existing): $FULL_SW_RESULT"
