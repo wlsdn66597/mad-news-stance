@@ -33,6 +33,8 @@ ORDER_SEED="${ORDER_SEED:-8001}"
 TEMPERATURE="${TEMPERATURE:-1.0}"
 DATA="${DATA:-data/k-news-stance_nosegment.json}"
 JUDGE_MODEL="${JUDGE_MODEL:-LGAI-EXAONE/EXAONE-4.0-1.2B}"
+RUN_NO_SOURCING="${RUN_NO_SOURCING:-1}"
+RUN_NO_WORDING="${RUN_NO_WORDING:-1}"
 DRY_RUN="${DRY_RUN:-0}"
 
 BASE="results/phase2/stance_${MODEL}_${SPLIT}_n${N}_${PROFILE}_d${DATA_SEED}_s${RUN_SEED}_a2_r4"
@@ -156,24 +158,36 @@ PY
 echo "===== NEWSMAD COMPONENT ABLATIONS START $(date '+%F %T') ====="
 echo "split=$SPLIT n=$N data_seed=$DATA_SEED run_seed=$RUN_SEED"
 echo "Full S/W + Judge is NOT regenerated."
-echo "w/o Sourcing: Wording/Wording, 2 agents, peer debate 4R, selective Judge"
-echo "w/o Wording: Sourcing/Sourcing, 2 agents, peer debate 4R, selective Judge"
+echo "w/o Sourcing enabled=$RUN_NO_SOURCING: Wording/Wording, 2 agents, peer debate 4R, selective Judge"
+echo "w/o Wording enabled=$RUN_NO_WORDING: Sourcing/Sourcing, 2 agents, peer debate 4R, selective Judge"
 echo "w/o Judge: metrics read from the existing S/W 4R result"
 
-run_debate "1. W/O SOURCING (WORDING / WORDING): DEBATE 4R" \
-  "wording,wording"
-run_judge "2. W/O SOURCING (WORDING / WORDING): SELECTIVE JUDGE" \
-  "$NO_SOURCING_RESULT" "$NO_SOURCING_JUDGE_DIR"
+if [ "$RUN_NO_SOURCING" = "1" ]; then
+  run_debate "1. W/O SOURCING (WORDING / WORDING): DEBATE 4R" \
+    "wording,wording"
+  run_judge "2. W/O SOURCING (WORDING / WORDING): SELECTIVE JUDGE" \
+    "$NO_SOURCING_RESULT" "$NO_SOURCING_JUDGE_DIR"
+else
+  echo "[skip] w/o Sourcing (RUN_NO_SOURCING=$RUN_NO_SOURCING)"
+fi
 
-run_debate "3. W/O WORDING (SOURCING / SOURCING): DEBATE 4R" \
-  "sourcing,sourcing"
-run_judge "4. W/O WORDING (SOURCING / SOURCING): SELECTIVE JUDGE" \
-  "$NO_WORDING_RESULT" "$NO_WORDING_JUDGE_DIR"
+if [ "$RUN_NO_WORDING" = "1" ]; then
+  run_debate "3. W/O WORDING (SOURCING / SOURCING): DEBATE 4R" \
+    "sourcing,sourcing"
+  run_judge "4. W/O WORDING (SOURCING / SOURCING): SELECTIVE JUDGE" \
+    "$NO_WORDING_RESULT" "$NO_WORDING_JUDGE_DIR"
+else
+  echo "[skip] w/o Wording (RUN_NO_WORDING=$RUN_NO_WORDING)"
+fi
 
 if [ "$DRY_RUN" != "1" ]; then
   echo "===== FINAL METRICS ====="
-  print_judge_summary "w/o Sourcing (W/W)" "$NO_SOURCING_JUDGE_DIR"
-  print_judge_summary "w/o Wording (S/S)" "$NO_WORDING_JUDGE_DIR"
+  if [ "$RUN_NO_SOURCING" = "1" ]; then
+    print_judge_summary "w/o Sourcing (W/W)" "$NO_SOURCING_JUDGE_DIR"
+  fi
+  if [ "$RUN_NO_WORDING" = "1" ]; then
+    print_judge_summary "w/o Wording (S/S)" "$NO_WORDING_JUDGE_DIR"
+  fi
   print_no_judge_summary "$FULL_SW_RESULT"
 fi
 
