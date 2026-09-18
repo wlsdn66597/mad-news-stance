@@ -38,7 +38,7 @@ RUN_NO_WORDING="${RUN_NO_WORDING:-1}"
 DRY_RUN="${DRY_RUN:-0}"
 
 BASE="results/phase2/stance_${MODEL}_${SPLIT}_n${N}_${PROFILE}_d${DATA_SEED}_s${RUN_SEED}_a2_r4"
-FULL_SW_RESULT="${BASE}_personas_mix-sourcing-wording_reasoned_exchange_full.json"
+FULL_SW_RESULT="${BASE}_personas_mix-sourcing-wording_reasoned_exchange_full_loo-no-f.json"
 NO_SOURCING_RESULT="${BASE}_personas_mix-wording-wording_reasoned_exchange_full.json"
 NO_WORDING_RESULT="${BASE}_personas_mix-sourcing-sourcing_reasoned_exchange_full.json"
 
