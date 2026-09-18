@@ -159,6 +159,17 @@ class AgentPersonaTest(unittest.TestCase):
         self.assertIn("do not infer omitted", grounded[0].lower())
         self.assertEqual(generic[1:], grounded[1:])
 
+    def test_two_agent_role_removals_repeat_the_remaining_role(self):
+        no_sourcing = stance_personas(2, mix="wording,wording")
+        no_wording = stance_personas(2, mix="sourcing,sourcing")
+
+        self.assertEqual(len(no_sourcing), 2)
+        self.assertEqual(len(no_wording), 2)
+        self.assertEqual(no_sourcing[0], no_sourcing[1])
+        self.assertEqual(no_wording[0], no_wording[1])
+        self.assertIn("wording", no_sourcing[0].lower())
+        self.assertIn("sourcing", no_wording[0].lower())
+
 
 class MinimalEnBaselineTemplatesTest(unittest.TestCase):
     """The rows the plan's baseline column needs, and a fair memory test."""
