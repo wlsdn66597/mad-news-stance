@@ -3,12 +3,15 @@
 # Sourcing/Wording pipeline the proposed NewsMAD model:
 #
 #   1) two-agent MAD (no persona prompts) + selective Judge
-#   2) w/o Sourcing: Wording / Wording + selective Judge
-#   3) w/o Wording:  Sourcing / Sourcing + selective Judge
+#   2) w/o Sourcing: one Wording agent only
+#   3) w/o Wording:  one Sourcing agent only
 #
 # Every condition uses the paper settings: EXAONE-4.0-1.2B, the 1001-item test
-# split, stance_minimal_en, temperature 1.0, four rounds of
-# reasoned_exchange_full, and the existing non-unanimous Judge configuration.
+# split, stance_minimal_en, temperature 1.0, and seed 6000.  The matched MAD
+# baseline uses four rounds plus the existing non-unanimous Judge.  A one-agent
+# role removal has no peer to debate and can never trigger a non-unanimous
+# Judge, so it is evaluated once with the same initial CoT task prompt used at
+# round 0 of the proposed model.
 # run_phase2.py and run_selective_judge.py save per item, so invoking this
 # script again resumes an interrupted run instead of regenerating completed
 # items.
@@ -38,19 +41,16 @@ DATA="${DATA:-data/k-news-stance_nosegment.json}"
 JUDGE_MODEL="${JUDGE_MODEL:-LGAI-EXAONE/EXAONE-4.0-1.2B}"
 DRY_RUN="${DRY_RUN:-0}"
 
-BASE="results/phase2/stance_${MODEL}_${SPLIT}_n${N}_${PROFILE}_d${DATA_SEED}_s${RUN_SEED}_a2_r4"
-MAD_RESULT="${BASE}_reasoned_exchange_full.json"
-NO_SOURCING_RESULT="${BASE}_personas_mix-wording-wording_reasoned_exchange_full.json"
-NO_WORDING_RESULT="${BASE}_personas_mix-sourcing-sourcing_reasoned_exchange_full.json"
+BASE="results/phase2/stance_${MODEL}_${SPLIT}_n${N}_${PROFILE}_d${DATA_SEED}_s${RUN_SEED}"
+MAD_RESULT="${BASE}_a2_r4_reasoned_exchange_full.json"
+NO_SOURCING_RESULT="${BASE}_a1_r1_personas_only-wording.json"
+NO_WORDING_RESULT="${BASE}_a1_r1_personas_only-sourcing.json"
 
 MAD_JUDGE_DIR="results/judge_mad_a2_4r_full_s${RUN_SEED}"
-NO_SOURCING_JUDGE_DIR="results/judge_no_sourcing_ww_a2_4r_full_s${RUN_SEED}"
-NO_WORDING_JUDGE_DIR="results/judge_no_wording_ss_a2_4r_full_s${RUN_SEED}"
 
 [ -f "$CONFIG" ] || { echo "missing config: $CONFIG" >&2; exit 2; }
 [ -f "$DATA" ] || { echo "missing dataset: $DATA" >&2; exit 2; }
-mkdir -p logs results/phase2 \
-  "$MAD_JUDGE_DIR" "$NO_SOURCING_JUDGE_DIR" "$NO_WORDING_JUDGE_DIR"
+mkdir -p logs results/phase2 "$MAD_JUDGE_DIR"
 
 run_step () {
   local title="$1"
@@ -86,6 +86,20 @@ run_debate () {
     args+=(--personas --persona-mix "$mix")
   fi
   run_step "$title" "${args[@]}"
+}
+
+run_single_role () {
+  local title="$1"
+  local role="$2"
+  run_step "$title" \
+    python scripts/run_phase2.py \
+      --config "$CONFIG" --model "$MODEL" \
+      --methods cot --personas --persona-mix "$role" \
+      --split "$SPLIT" --n "$N" \
+      --prompt-profile "$PROFILE" \
+      --data-seed "$DATA_SEED" --run-seed "$RUN_SEED" \
+      --temperature "$TEMPERATURE" \
+      --n-agents 1 --n-rounds 1
 }
 
 run_judge () {
@@ -139,33 +153,57 @@ print(
 PY
 }
 
+print_single_role_summary () {
+  local label="$1"
+  local result="$2"
+  if [ "$DRY_RUN" = "1" ]; then
+    return 0
+  fi
+  [ -f "$result" ] || {
+    echo "[summary] $label: missing result $result"
+    return 0
+  }
+  python - "$label" "$result" <<'PY'
+import json
+import sys
+
+from src.consensus import classification_metrics
+
+label, path = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    result = json.load(handle)
+rows = list(result["cot"].values())
+metrics = classification_metrics(
+    [row["pred"] for row in rows],
+    [row["gold"] for row in rows],
+)
+print(
+    f"[summary] {label}: "
+    f"ACC={metrics['accuracy']:.4f} F1={metrics['macro_f1']:.4f} "
+    f"items={len(rows)}"
+)
+PY
+}
+
 echo "===== NEWSMAD FINAL CONTROLS START $(date '+%F %T') ====="
 echo "split=$SPLIT n=$N data_seed=$DATA_SEED run_seed=$RUN_SEED"
-echo "All conditions: 2 agents, 4 rounds, reasoned_exchange_full, selective Judge"
+echo "MAD control: 2 agents, 4 rounds, reasoned_exchange_full, selective Judge"
+echo "Role removals: one remaining role, one independent response, no Judge"
 
 run_debate "1. MAD (2 AGENTS, NO PERSONAS): DEBATE 4R" ""
 run_judge "2. MAD (2 AGENTS): SELECTIVE JUDGE" \
   "$MAD_RESULT" "$MAD_JUDGE_DIR"
 
-run_debate "3. W/O SOURCING (WORDING / WORDING): DEBATE 4R" \
-  "wording,wording"
-run_judge "4. W/O SOURCING (WORDING / WORDING): SELECTIVE JUDGE" \
-  "$NO_SOURCING_RESULT" "$NO_SOURCING_JUDGE_DIR"
-
-run_debate "5. W/O WORDING (SOURCING / SOURCING): DEBATE 4R" \
-  "sourcing,sourcing"
-run_judge "6. W/O WORDING (SOURCING / SOURCING): SELECTIVE JUDGE" \
-  "$NO_WORDING_RESULT" "$NO_WORDING_JUDGE_DIR"
+run_single_role "3. W/O SOURCING: WORDING AGENT ONLY" "wording"
+run_single_role "4. W/O WORDING: SOURCING AGENT ONLY" "sourcing"
 
 echo "===== FINAL METRICS ====="
 print_summary "MAD a2 4R + Judge" "$MAD_JUDGE_DIR"
-print_summary "w/o Sourcing (W/W) + Judge" "$NO_SOURCING_JUDGE_DIR"
-print_summary "w/o Wording (S/S) + Judge" "$NO_WORDING_JUDGE_DIR"
+print_single_role_summary "w/o Sourcing (Wording only)" "$NO_SOURCING_RESULT"
+print_single_role_summary "w/o Wording (Sourcing only)" "$NO_WORDING_RESULT"
 
 echo "===== NEWSMAD FINAL CONTROLS COMPLETE $(date '+%F %T') ====="
 echo "mad_result=$MAD_RESULT"
 echo "mad_judge_dir=$MAD_JUDGE_DIR"
 echo "no_sourcing_result=$NO_SOURCING_RESULT"
-echo "no_sourcing_judge_dir=$NO_SOURCING_JUDGE_DIR"
 echo "no_wording_result=$NO_WORDING_RESULT"
-echo "no_wording_judge_dir=$NO_WORDING_JUDGE_DIR"
